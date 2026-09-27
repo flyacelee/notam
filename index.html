@@ -1,0 +1,1416 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NOTAM to FMS & ATS Flight Plan 공역 분석기 (Offline Pro)</title>
+
+  <!-- Tailwind CSS CDN (필수 디자인 유지를 위한 최소 스타일) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@0.383.0/dist/umd/lucide.min.js"></script>
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <!-- PDF.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+  <!-- Google Fonts: Pretendard & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Pretendard:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <style>
+    body { font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .font-mono-code { font-family: 'JetBrains Mono', monospace; }
+    .custom-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+    .custom-scroll::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
+    .custom-scroll::-webkit-scrollbar-thumb { background: rgba(56, 189, 248, 0.25); border-radius: 4px; }
+    .custom-scroll::-webkit-scrollbar-thumb:hover { background: rgba(56, 189, 248, 0.5); }
+    #notam-map { background:#0b1220; isolation:isolate; }
+    #notam-map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.8) contrast(.9); }
+    #notam-map .leaflet-popup-content { font-size:11px; line-height:1.5; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col selection:bg-sky-500 selection:text-white">
+
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-40 px-4 py-3">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20 text-white">
+          <i data-lucide="plane-takeoff" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="font-bold text-lg text-white tracking-tight">NOTAM to FMS & ATS Flight Plan 분석기</h1>
+            <span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-semibold border border-emerald-500/35">OFFLINE PRO v2</span>
+          </div>
+          <p class="text-xs text-slate-400">OFP PDF 파싱 • 오프라인 FPL 정밀 분석 • 패키지 시간대 연동 노탐 • Jeppesen FD 좌표 변환</p>
+        </div>
+      </div>
+
+    </div>
+  </header>
+
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-5">
+    
+    <!-- 좌측 컬럼: FPL 및 패키지 1 (공항 노탐) -->
+    <div class="lg:col-span-6 flex flex-col gap-4">
+
+      <!-- 1. 비행계획서 & 경로 -->
+      <section class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <h2 class="font-bold text-sm text-slate-100 flex items-center gap-1.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
+            <i data-lucide="file-text" class="w-4 h-4 text-sky-400"></i> 1. 비행계획서 (FPL) 및 경로
+          </h2>
+          <select id="recent-routes-select" class="bg-slate-950 text-[11px] text-sky-300 border border-slate-700 rounded-lg px-2 py-1 max-w-[170px] truncate focus:outline-none focus:border-sky-500">
+            <option value="">최근 저장 경로 (최대 5개)...</option>
+          </select>
+        </div>
+
+        <!-- OFP PDF 첨부 -->
+        <div class="relative group">
+          <input type="file" id="pdf-file-input" accept="application/pdf,.pdf" class="absolute inset-0 w-full h-full opacity-0 z-30 cursor-pointer" title="클릭하여 PDF 첨부" />
+          <div id="pdf-dropzone" class="border-2 border-dashed border-sky-500/40 group-hover:border-sky-400 bg-slate-950/80 group-hover:bg-slate-900 rounded-xl p-3.5 flex flex-col items-center justify-center gap-1.5 transition-all shadow-inner relative z-10 pointer-events-none">
+            <div class="flex items-center gap-3 w-full justify-center">
+              <div class="w-9 h-9 rounded-lg bg-sky-500/20 text-sky-400 flex items-center justify-center group-hover:scale-110 transition-transform flex-shrink-0">
+                <i data-lucide="upload-cloud" class="w-5 h-5"></i>
+              </div>
+              <div class="text-left flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <span id="pdf-upload-label" class="text-xs font-bold text-sky-300 group-hover:text-white truncate">OFP PDF 파일 첨부</span>
+                  <button type="button" class="px-2 py-0.5 rounded bg-sky-500 text-white text-[10px] font-bold shadow flex items-center gap-1">
+                    <i data-lucide="file-plus" class="w-3 h-3"></i> 파일 선택
+                  </button>
+                </div>
+                <p id="pdf-upload-subtext" class="text-[10px] text-slate-400 mt-0.5">클릭하거나 PDF를 이곳에 놓으세요</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PDF 로딩 상태 바 -->
+        <div id="pdf-progress-bar" class="hidden flex items-center gap-2 text-xs text-sky-400 font-mono-code bg-sky-950/40 p-2 rounded-lg border border-sky-800/50">
+          <div class="w-3.5 h-3.5 border-2 border-sky-400 border-t-transparent rounded-full animate-spin flex-shrink-0"></div>
+          <span id="pdf-progress-text">PDF 텍스트 분석 중...</span>
+        </div>
+
+        <div class="relative">
+          <textarea id="route-input" rows="4" placeholder="비행계획서 전문(FPL-...) 또는 비행경로 입력" class="w-full bg-slate-950 text-slate-200 border border-slate-700/80 rounded-xl p-3 text-xs font-mono-code focus:outline-none focus:border-sky-500 custom-scroll resize-y leading-relaxed"></textarea>
+          <button id="btn-clear-route" class="absolute top-2 right-2 text-slate-500 hover:text-rose-400 text-xs p-1" title="비우기"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
+        </div>
+
+        <div id="route-coord-preview" class="bg-slate-950/60 border border-slate-800 rounded-xl p-2 text-[10px] text-slate-500 font-mono-code">FPL 좌표 추출: 대기중...</div>
+        <div id="fixdb-status" class="text-[10px] text-slate-500 font-mono-code"></div>
+        <div class="flex items-center gap-2">
+          <button id="btn-apply-route" class="flex-1 bg-sky-600 hover:bg-sky-500 text-white font-semibold py-2 px-4 rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg transition-all active:scale-95">
+            <i data-lucide="play" class="w-4 h-4"></i> FPL 정밀 분석 및 노탐 매칭
+          </button>
+          <button id="btn-reset-route" class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium py-2 px-3 rounded-xl text-xs flex items-center gap-1 border border-slate-700">
+            <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> RESET
+          </button>
+        </div>
+      </section>
+
+      <!-- 2. Package 1 공항 시설 NOTAM (출발 / 목적지 시간대 연동) -->
+      <section class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col gap-3">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <h2 class="font-bold text-sm text-slate-100 flex items-center gap-1.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+            <i data-lucide="building-2" class="w-4 h-4 text-amber-400"></i> 2. Package 1 공항 시설 NOTAM
+          </h2>
+          <label class="flex items-center gap-1.5 cursor-pointer text-[11px] text-amber-300 bg-amber-950/40 px-2 py-0.5 rounded-md border border-amber-800/40" title="출발(ETD~ETD+1h), 도착(ETA-30m~ETA+1h) 기준">
+            <input type="checkbox" id="chk-pkg1-time-filter" checked class="rounded bg-slate-900 border-amber-600 text-amber-500 focus:ring-0 w-3 h-3" />
+            <span id="chk-pkg1-label">운항시간 필터링 (도착 ETA 반영)</span>
+          </label>
+        </div>
+        <div class="flex items-center gap-2 border-b border-slate-800 pb-2">
+          <button id="btn-pkg1-tab-dep" class="flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all bg-sky-600 text-white shadow"><span id="tab-label-dep">출발공항 (DEP: --)</span></button>
+          <button id="btn-pkg1-tab-dest" class="flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all bg-slate-800 text-slate-400 hover:text-slate-200"><span id="tab-label-dest">목적공항 (DEST: --)</span></button>
+          <button id="btn-pkg1-tab-altn" class="flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all bg-slate-800 text-slate-400 hover:text-slate-200"><span id="tab-label-altn">교체공항 (ALTN: --)</span></button>
+        </div>
+        <div id="pkg1-notam-list" class="flex flex-col gap-2 max-h-72 overflow-y-auto custom-scroll pr-1">
+          <div class="p-4 text-center text-xs text-slate-500 italic bg-slate-950/50 rounded-xl border border-slate-800/60">분석을 실행하면 공항 노탐이 표시됩니다.</div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- 우측 컬럼: Package 3 공역 노탐, 수동 변환기, FPL 종합 분석 -->
+    <div class="lg:col-span-6 flex flex-col gap-4">
+
+      <!-- 3. Package 3 공역 NOTAM -->
+      <section class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <h2 class="font-bold text-sm text-slate-100 flex items-center gap-1.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-rose-400"></span>
+            <i data-lucide="shield-alert" class="w-4 h-4 text-rose-400"></i> 3. Package 3 공역 NOTAM (FliteDeck 연동)
+          </h2>
+          <div class="flex items-center gap-1.5">
+            <button id="btn-copy-all-airspace" type="button" class="text-[10px] font-bold text-rose-300 hover:text-white bg-rose-950/60 hover:bg-rose-900 border border-rose-800/60 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 active:scale-95 shadow">
+              <i data-lucide="copy" class="w-3 h-3"></i>
+              <span id="btn-copy-all-text">FD 일괄 복사</span>
+            </button>
+            <span id="pdf-notam-count-badge" class="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[10px] font-mono-code font-bold border border-rose-500/30">0개 감지</span>
+          </div>
+        </div>
+        <div id="pdf-notams-container" class="flex flex-col gap-2 max-h-40 overflow-y-auto custom-scroll pr-1">
+          <div class="p-4 text-center text-xs text-slate-500 italic bg-slate-950/50 rounded-xl border border-slate-800/60">감지된 공역 노탐이 없습니다.</div>
+        </div>
+        <div class="flex items-center justify-between pt-1 border-t border-slate-800">
+          <h3 class="text-[11px] font-bold text-slate-300 flex items-center gap-1"><i data-lucide="globe" class="w-3.5 h-3.5 text-teal-400"></i> FIR 통과 NOTAM <span class="text-slate-500 font-normal">(좌표 없음 · 통과시각으로 판정)</span></h3>
+          <span id="fir-notam-count-badge" class="px-2 py-0.5 rounded bg-teal-500/20 text-teal-300 text-[10px] font-mono-code font-bold border border-teal-500/30">0개</span>
+        </div>
+        <div id="fir-notam-list" class="flex flex-col gap-2 max-h-40 overflow-y-auto custom-scroll pr-1">
+          <div class="p-3 text-center text-xs text-slate-500 italic bg-slate-950/50 rounded-xl border border-slate-800/60">경로에 FIR 통과 정보가 없습니다.</div>
+        </div>
+      </section>
+
+      <!-- 4. 수동 NOTAM 입력 -->
+      <section class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <h2 class="font-bold text-sm text-slate-100 flex items-center gap-1.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+            <i data-lucide="cpu" class="w-4 h-4 text-emerald-400"></i> 4. 수동 NOTAM 좌표 & FMS 변환
+          </h2>
+          <button id="btn-reset-notam" class="text-xs text-slate-400 hover:text-rose-400 flex items-center gap-1"><i data-lucide="rotate-ccw" class="w-3 h-3"></i></button>
+        </div>
+        <textarea id="notam-input" rows="2" placeholder="60진법 좌표 연속 입력 (예: 370000N1240000E-370000N1243132E...)" class="w-full bg-slate-950 text-slate-200 border border-slate-700/80 rounded-xl p-2.5 text-xs font-mono-code focus:outline-none focus:border-emerald-500 custom-scroll resize-y leading-relaxed"></textarea>
+        <button id="btn-convert-notam" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all">
+          <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> FMS 변환 (DDMM.m 포맷)
+        </button>
+        <div class="bg-slate-950 rounded-xl p-3 border border-slate-800">
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="text-[10px] font-bold text-slate-400 uppercase">FMS 좌표 (DDMM.m)</span>
+            <button id="btn-copy-fms" class="text-[10px] text-sky-400 hover:text-sky-300 flex items-center gap-1 bg-sky-950/60 border border-sky-800/50 px-2 py-0.5 rounded"><i data-lucide="copy" class="w-3 h-3"></i>복사</button>
+          </div>
+          <pre id="fms-output" class="font-mono-code text-xs text-emerald-400 max-h-20 overflow-y-auto custom-scroll whitespace-pre-wrap">대기중...</pre>
+        </div>
+      </section>
+
+      <!-- 5. FPL 정밀 분석 -->
+      <section class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col gap-3">
+        <h2 class="font-bold text-sm text-slate-100 flex items-center gap-1.5 border-b border-slate-800 pb-2.5">
+          <span class="w-2.5 h-2.5 rounded-full bg-indigo-400"></span>
+          <i data-lucide="bar-chart-3" class="w-4 h-4 text-indigo-400"></i> 5. ATS FPL 종합 정밀 분석
+        </h2>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div class="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800/80"><span class="text-[10px] text-slate-500 uppercase">편명 / 등록기호</span><p id="info-callsign" class="text-sm font-bold font-mono-code text-sky-400 mt-0.5 truncate">-- / --</p></div>
+          <div class="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800/80"><span class="text-[10px] text-slate-500 uppercase">기종 / 후류</span><p id="info-aircraft" class="text-sm font-bold font-mono-code text-slate-200 mt-0.5 truncate">-- / --</p></div>
+          <div class="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800/80"><span class="text-[10px] text-slate-500 uppercase">출발 / ETD</span><p id="info-dep" class="text-sm font-bold font-mono-code text-emerald-400 mt-0.5 truncate">-- (00:00Z)</p></div>
+          <div class="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800/80"><span class="text-[10px] text-slate-500 uppercase">목적지 / ETA</span><p id="info-dest" class="text-sm font-bold font-mono-code text-orange-400 mt-0.5 truncate">-- (00:00Z)</p></div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs font-mono-code">
+          <div class="bg-slate-950/80 p-3 rounded-xl border border-slate-800"><div class="text-sky-300 font-bold mb-1 flex items-center gap-1"><i data-lucide="radio" class="w-3.5 h-3.5"></i> 통신·항법 (Item 10a)</div><div id="decoded-item10a" class="text-slate-300 text-[11px] leading-relaxed">대기중...</div></div>
+          <div class="bg-slate-950/80 p-3 rounded-xl border border-slate-800"><div class="text-emerald-300 font-bold mb-1 flex items-center gap-1"><i data-lucide="radar" class="w-3.5 h-3.5"></i> 감시 (Item 10b)</div><div id="decoded-item10b" class="text-slate-300 text-[11px] leading-relaxed">대기중...</div></div>
+          <div class="bg-slate-950/80 p-3 rounded-xl border border-slate-800"><div class="text-indigo-300 font-bold mb-1 flex items-center gap-1"><i data-lucide="compass" class="w-3.5 h-3.5"></i> PBN/제원 (Item 18)</div><div id="decoded-item18" class="text-slate-300 text-[11px] leading-relaxed">대기중...</div></div>
+          <div class="bg-slate-950/80 p-3 rounded-xl border border-slate-800"><div class="text-rose-300 font-bold mb-1 flex items-center gap-1"><i data-lucide="life-buoy" class="w-3.5 h-3.5"></i> 안전/구호 (Item 19)</div><div id="decoded-item19" class="text-slate-300 text-[11px] leading-relaxed">대기중...</div></div>
+        </div>
+      </section>
+
+    </div>
+
+      <!-- 6. 조종사 우선순위 체크리스트 -->
+      <section class="lg:col-span-12 bg-slate-900/90 border border-rose-900/40 rounded-2xl p-4 shadow-xl">
+        <div class="flex items-center justify-between gap-2 flex-wrap">
+          <h2 class="font-bold text-sm text-slate-100 flex items-center gap-1.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-rose-400"></span>
+            <i data-lucide="clipboard-check" class="w-4 h-4 text-rose-400"></i> 6. 조종사 우선순위 체크리스트 (DEP · DEST · ALTN)
+          </h2>
+        </div>
+        <p class="text-[10px] text-slate-500 mt-1">활주로 운영 · 유도로 CLOSED · 게이트 CLOSED · VDGS · 항법장비 INOP · 접근절차 MINIMUM 변경 · MISSED APCH 절차 · 보안 관련만 모아 우선순위 순으로 표시합니다. 경로가 지나는 공역·FIR NOTAM 중 항법·보안 관련 항목도 함께 포함됩니다. 현재 운항시간대에 해당하지 않는 항목은 흐리게 표시됩니다.</p>
+        <div id="pilot-priority-badge" class="flex flex-wrap gap-1.5 mt-3"></div>
+        <div id="pilot-priority-list" class="flex flex-col gap-2 mt-3 max-h-96 overflow-y-auto custom-scroll pr-1">
+          <div class="p-4 text-center text-xs text-slate-500 italic bg-slate-950/50 rounded-xl border border-slate-800/60">분석을 실행하면 표시됩니다.</div>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800">
+          <h3 class="text-[11px] font-bold text-slate-300 flex items-center gap-1 mb-2"><i data-lucide="megaphone" class="w-3.5 h-3.5 text-rose-400"></i> 요약 브리프 (자연어)</h3>
+          <div id="quick-brief-cards" class="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <div class="p-3 text-center text-xs text-slate-500 italic bg-slate-950/50 rounded-xl border border-slate-800/60 md:col-span-2">분석을 실행하면 표시됩니다.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 7. 운항 영향도 / 공역 충돌 분석 -->
+      <section class="lg:col-span-12 bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl">
+        <div class="flex items-center justify-between gap-2 flex-wrap">
+          <h2 class="font-bold text-sm text-slate-100 flex items-center gap-1.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-fuchsia-400"></span>
+            <i data-lucide="route" class="w-4 h-4 text-fuchsia-400"></i> 7. Route / NOTAM 영향도 분석
+          </h2>
+          <div class="flex items-center gap-2">
+            <span id="route-point-count" class="text-[10px] text-slate-400">좌표점 0</span>
+            <button id="btn-run-conflict" class="px-3 py-1.5 rounded-lg bg-fuchsia-600 hover:bg-fuchsia-500 text-white text-[10px] font-bold flex items-center gap-1"><i data-lucide="scan-search" class="w-3 h-3"></i> 경로 충돌 재분석</button>
+            <button id="btn-export-briefing" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[10px] font-bold flex items-center gap-1"><i data-lucide="clipboard-copy" class="w-3 h-3"></i> 운항 브리핑 복사</button>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3">
+          <div class="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800"><span class="text-[10px] text-slate-500">CRITICAL</span><p id="risk-critical" class="text-lg font-bold text-rose-400">0</p></div>
+          <div class="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800"><span class="text-[10px] text-slate-500">WARNING</span><p id="risk-warning" class="text-lg font-bold text-amber-400">0</p></div>
+          <div class="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800"><span class="text-[10px] text-slate-500">ADVISORY</span><p id="risk-advisory" class="text-lg font-bold text-sky-400">0</p></div>
+          <div class="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800"><span class="text-[10px] text-slate-500">경로 영향</span><p id="risk-route" class="text-lg font-bold text-fuchsia-400">0</p></div>
+          <div class="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800"><span class="text-[10px] text-slate-500">고도 충돌</span><p id="risk-altitude" class="text-lg font-bold text-orange-400">0</p></div>
+        </div>
+        <div id="conflict-list" class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+          <div class="p-4 text-center text-xs text-slate-500 italic bg-slate-950/50 rounded-xl border border-slate-800/60 md:col-span-2">FPL과 좌표가 포함된 공역 NOTAM을 분석하면 경로 영향도를 표시합니다.</div>
+        </div>
+        <p class="mt-2 text-[10px] text-slate-500">※ 명칭형 waypoint는 AIRAC 좌표 DB가 로드된 경우에만 정밀 교차판정됩니다. 현재 원본 파일에는 외부 AIRAC DB가 포함되어 있지 않습니다.</p>
+      </section>
+
+      <!-- 7. NOTAM 해석 결과 / 브리핑 -->
+      <section class="lg:col-span-12 bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl">
+        <div class="flex items-center justify-between">
+          <h2 class="font-bold text-sm text-slate-100 flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span><i data-lucide="file-search" class="w-4 h-4 text-cyan-400"></i> 8. NOTAM 해석 결과 / 운항 조치</h2>
+          <span id="analysis-timestamp" class="text-[10px] text-slate-500">--</span>
+        </div>
+        <div id="briefing-output" class="mt-3 bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono-code text-[11px] text-slate-300 whitespace-pre-wrap leading-relaxed min-h-24">운항 분석을 실행하면 핵심 조치사항이 표시됩니다.</div>
+      </section>
+
+      <!-- 8. 경로 / FIR 공역 NOTAM 지도 -->
+      <section class="lg:col-span-12 bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl">
+        <div class="flex items-center justify-between gap-2 flex-wrap">
+          <h2 class="font-bold text-sm text-slate-100 flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-teal-400"></span><i data-lucide="map" class="w-4 h-4 text-teal-400"></i> 9. 비행경로 · FIR 공역 NOTAM 지도</h2>
+          <div class="flex items-center gap-3 text-[10px] text-slate-300">
+            <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" id="map-chk-all" checked class="w-3 h-3" /> 경로 미교차 NOTAM 포함</label>
+            <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" id="map-chk-tiles" checked class="w-3 h-3" /> 배경지도(인터넷 필요)</label>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[10px] text-slate-400">
+          <span><b style="color:#38bdf8">━</b> 비행경로</span>
+          <span><b style="color:#f43f5e">■</b> 경로 교차 · 통과시각 유효</span>
+          <span><b style="color:#f59e0b">▨</b> 경로 교차 · 통과시각 비활성</span>
+          <span><b style="color:#64748b">▨</b> 경로 미교차</span>
+          <span><b style="background:#0f766e;color:#ecfeff;border-radius:3px;padding:0 4px;font-size:9px">FIR N</b> FIR 진입점 · 클릭 시 해당 FIR 유효 NOTAM 목록</span>
+          <span id="map-summary" class="text-slate-300 font-mono-code"></span>
+        </div>
+        <div id="notam-map" class="mt-3 rounded-xl border border-slate-800 overflow-hidden" style="height:460px"></div>
+        <p class="mt-2 text-[10px] text-slate-500">※ 좌표가 있는 공역(다각형·GPS 반경) NOTAM만 표시됩니다. 통과시각은 OFP 항법로그 경과시간 기준 ±30분입니다. 배경지도가 없어도(오프라인) 경로와 공역은 표시됩니다.</p>
+      </section>
+  </main>
+
+  <!-- 상세 모달 -->
+  <div id="notam-detail-modal" class="fixed inset-0 z-[2000] bg-slate-950/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+      <div class="px-5 py-4 bg-slate-800/80 border-b border-slate-700 flex justify-between">
+        <h3 id="modal-notam-title" class="font-bold text-base text-white font-mono-code flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-rose-500"></span>NOTAM 상세</h3>
+        <button id="btn-close-modal" class="text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <div class="p-5 overflow-y-auto custom-scroll flex flex-col gap-4 text-xs font-mono-code">
+        <div class="grid grid-cols-2 gap-2">
+          <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800"><span class="text-[10px] text-slate-500 block">유효기간</span><span id="modal-validity" class="text-sky-300 font-bold block truncate">--</span></div>
+          <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800"><span class="text-[10px] text-slate-500 block">고도/시설</span><span id="modal-limits" class="text-amber-300 font-bold block truncate">--</span></div>
+        </div>
+        <div>
+          <span class="text-slate-400 font-bold block mb-1">NOTAM 원문</span>
+          <pre id="modal-raw-text" class="bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-200 whitespace-pre-wrap leading-relaxed text-[11px] max-h-48 overflow-y-auto custom-scroll"></pre>
+        </div>
+        <div id="modal-fms-block">
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="text-slate-400 font-bold flex items-center gap-1">
+              <i data-lucide="cpu" class="w-3.5 h-3.5 text-emerald-400"></i>
+              FMS 좌표 (DDMM.m)
+            </span>
+            <button id="btn-copy-modal-fms" type="button" class="text-[11px] text-emerald-400 hover:text-emerald-300 font-medium flex items-center gap-1 bg-emerald-950/60 border border-emerald-800/50 px-2.5 py-1 rounded transition-all active:scale-95 hover:bg-emerald-900/40">
+              <i data-lucide="copy" class="w-3 h-3"></i>
+              <span id="copy-modal-fms-text">좌표 복사</span>
+            </button>
+          </div>
+          <pre id="modal-fms-coords" class="bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-emerald-400 whitespace-pre-wrap leading-relaxed text-[11px] select-all"></pre>
+        </div>
+      </div>
+      <div class="px-5 py-3 bg-slate-950/80 border-t border-slate-800 flex justify-end">
+        <button id="btn-modal-close-bottom" class="px-4 py-1.5 rounded-lg bg-slate-800 text-slate-300 text-xs">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // PDF.js: file:// 로 직접 실행해도 동작하도록 worker 설정을 단순화합니다.
+    // Blob + importScripts 방식은 일부 브라우저/보안정책에서 Worker 생성이 실패할 수 있습니다.
+    if (window.pdfjsLib) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+
+    const RECENT_ROUTES_KEY = "FPL_RECENT_ROUTES_OFFLINE_V1";
+    const MONTH_MAP = { JAN:0, FEB:1, MAR:2, APR:3, MAY:4, JUN:5, JUL:6, AUG:7, SEP:8, OCT:9, NOV:10, DEC:11 };
+
+    // 조종사 브리핑 시 실질적으로 판단에 영향을 주는 순서로 정렬 (RWY > TWY > GATE > VDGS > NAV > 접근최저치 > MISSED APCH > 보안)
+    const PKG1_CATEGORY_CONFIG = {
+      "RWY":         { label: "활주로 운영/폐쇄",     color: "text-rose-400 bg-rose-950 border-rose-700",     icon: "plane-takeoff", priority: 1 },
+      "TWY":         { label: "유도로 CLOSED",        color: "text-amber-400 bg-amber-950 border-amber-700",  icon: "signpost",      priority: 2 },
+      "GATE":        { label: "게이트/계류장 CLOSED", color: "text-purple-400 bg-purple-950 border-purple-700", icon: "door-closed",  priority: 3 },
+      "VDGS":        { label: "VDGS CLOSED/INOP",     color: "text-fuchsia-400 bg-fuchsia-950 border-fuchsia-700", icon: "tv",        priority: 4 },
+      "NAV":         { label: "항법장비 INOP",         color: "text-sky-400 bg-sky-950 border-sky-700",        icon: "radio",         priority: 5 },
+      "APCH_MIN":    { label: "접근절차 MINIMUM 변경", color: "text-cyan-400 bg-cyan-950 border-cyan-700",     icon: "gauge",         priority: 6 },
+      "MISSED_APCH": { label: "MISSED APCH 절차",      color: "text-orange-400 bg-orange-950 border-orange-700", icon: "corner-up-left", priority: 7 },
+      "SECURITY":    { label: "보안 관련",              color: "text-red-400 bg-red-950 border-red-700",       icon: "shield-alert",  priority: 8 },
+      "OBST":        { label: "장애물/크레인",          color: "text-lime-400 bg-lime-950 border-lime-700",    icon: "triangle-alert", priority: 9 },
+      "GEN":         { label: "일반/기타",              color: "text-slate-300 bg-slate-800 border-slate-700", icon: "info",          priority: 10 }
+    };
+    const PILOT_PRIORITY_CATS = ["RWY","TWY","GATE","VDGS","NAV","APCH_MIN","MISSED_APCH","SECURITY"];
+
+    let currentRouteInfo = { dep: "", dest: "", altn: "", etdMinutes: null, etaMinutes: null, flightDate: "" };
+    let routeCoordinates = [], routeTokens = [], routeElapsed = [], routeFir = [], routeSource = "없음", package3FirNotams = [], analysisResults = [];
+    let package1AirportNotams = [], package3AirspaceNotams = [];
+    let currentPkg1Tab = "DEST", pkg1TimeFilterActive = true;
+
+    function formatMinutes(m) {
+      return `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    }
+
+    function parseOfpTimestamp(str) {
+      if (!str) return null;
+      const s = str.trim().toUpperCase();
+      if (s === "PERM" || s === "UFN" || /EST\s*$/.test(s)) return Infinity;
+
+      const ofpMatch = s.match(/(\d{2})([A-Z]{3})(\d{2})\s+(\d{2}):?(\d{2})/);
+      if (ofpMatch) {
+        const day = parseInt(ofpMatch[1], 10);
+        const month = MONTH_MAP[ofpMatch[2]] ?? 0;
+        const year = 2000 + parseInt(ofpMatch[3], 10);
+        const hour = parseInt(ofpMatch[4], 10);
+        const min = parseInt(ofpMatch[5], 10);
+        return Date.UTC(year, month, day, hour, min);
+      }
+
+      const icaoMatch = s.match(/(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/);
+      if (icaoMatch) {
+        const year = 2000 + parseInt(icaoMatch[1], 10);
+        const month = parseInt(icaoMatch[2], 10) - 1;
+        const day = parseInt(icaoMatch[3], 10);
+        const hour = parseInt(icaoMatch[4], 10);
+        const min = parseInt(icaoMatch[5], 10);
+        return Date.UTC(year, month, day, hour, min);
+      }
+
+      const timeMatch = s.match(/^(\d{2}):?(\d{2})/);
+      if (timeMatch && currentRouteInfo.flightDate) {
+        const [y, m, d] = currentRouteInfo.flightDate.split('-').map(Number);
+        return Date.UTC(y, m - 1, d, parseInt(timeMatch[1], 10), parseInt(timeMatch[2], 10));
+      }
+
+      return null;
+    }
+
+    function classifyAirportNotamCategory(text) {
+      const u = (text || "").toUpperCase();
+      // 활주로/유도로 번호가 본문에 같이 언급돼도 실제 성격(보안·접근절차 등)을 먼저 판정
+      if (/\b(SECURITY|SCREENING|THREAT|EXPLOSIVE|K-?9|CANINE|ARMED GUARD|TERRORIS|HIJACK)\b/.test(u)) return "SECURITY";
+      if (/\bMISSED APCH\b|\bMISSED APPROACH\b|GO-?AROUND PROC/.test(u)) return "MISSED_APCH";
+      if (/\bMINIMA\b|\bMINIMUMS?\b|\bDA\(H\)?\b|\bMDA\b|\bDH\b|\bRVR\b|\bCAT\s?(I{1,3}|1|2|3)\b/.test(u)) return "APCH_MIN";
+      if (/\bVDGS\b|DOCKING GUIDANCE|A-?VDGS/.test(u)) return "VDGS";
+      if (/\bGATE\b|\bSTAND\b|\bAPRON\b|\bRAMP\b|PARKING POSITION/.test(u)) return "GATE";
+      if (/\bILS\b|\bLOC\b|GLIDE ?PATH|\bVOR\b|\bDME\b|\bNDB\b|\bGNSS\b|\bGPS\b|\bPALS\b|\bMLS\b|\bTACAN\b/.test(u)) return "NAV";
+      if (/^\s*(TWY|TAXIWAY)\b/.test(u) || /\bTWY\b|\bTAXIWAY\b/.test(u)) return "TWY";
+      if (/\bRWY\b|\bRUNWAY\b|\bTORA\b|\bTODA\b|\bASDA\b|\bLDA\b/.test(u)) return "RWY";
+      if (/\bOBST\b|\bCRANE\b/.test(u)) return "OBST";
+      return "GEN";
+    }
+
+    function fmsPart(deg, min, sec, pad) {
+      let t = Math.round((min + sec / 60) * 10);
+      if (t >= 600) { deg += 1; t -= 600; }
+      return String(deg).padStart(pad, '0') + String(Math.floor(t / 10)).padStart(2, '0') + '.' + (t % 10);
+    }
+    function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+    function convert60ToFms(coordStr) {
+      const clean = coordStr.replace(/[\s-]/g, '');
+      const regex = /(\d{2})([0-5]\d)([0-5]\d)?([NS])(\d{2,3})([0-5]\d)([0-5]\d)?([EW])/g;
+      let matches, fmsLines = [], latlngs = [];
+
+      while ((matches = regex.exec(clean)) !== null) {
+        const latDeg = parseInt(matches[1], 10), latMin = parseInt(matches[2], 10), latSec = matches[3]?parseInt(matches[3],10):0;
+        const lonDeg = parseInt(matches[5], 10), lonMin = parseInt(matches[6], 10), lonSec = matches[7]?parseInt(matches[7],10):0;
+        
+        let decLat = latDeg + latMin/60 + latSec/3600; if(matches[4]==='S') decLat = -decLat;
+        let decLon = lonDeg + lonMin/60 + lonSec/3600; if(matches[8]==='W') decLon = -decLon;
+        latlngs.push([decLat, decLon]);
+
+        const fmsLat = `${matches[4]}${fmsPart(latDeg, latMin, latSec, 2)}`;
+        const fmsLon = `${matches[8]}${fmsPart(lonDeg, lonMin, lonSec, 3)}`;
+        fmsLines.push(`${fmsLat} ${fmsLon}`);
+      }
+      return { fmsText: fmsLines.join('\n'), latlngs };
+    }
+
+    function parseNotamValidity(raw) {
+      const t = String(raw || '').toUpperCase();
+      let m = t.match(/B\)\s*(\d{10})\s*C\)\s*(\d{10}(?:\s*EST)?|PERM|UFN)/);
+      if (m) return {from:m[1], to:m[2], display:`${m[1]} ~ ${m[2]}`};
+      m = t.match(/(\d{2}[A-Z]{3}\d{2}\s+\d{2}:?\d{2})\s*[-~]\s*(\d{2}[A-Z]{3}\d{2}\s+\d{2}:?\d{2}|PERM|UFN)/);
+      if (m) return {from:m[1], to:m[2], display:`${m[1]} ~ ${m[2]}`};
+      return {from:"", to:"", display:"상시 / 유효기간 미확인"};
+    }
+
+    function parseAltitudeLimit(text) {
+      const u = String(text || '').toUpperCase().replace(/\s+/g,' ');
+      let low = null, high = null;
+      if (/\bSFC\b/.test(u)) low = 0;
+      const fl = [...u.matchAll(/\bFL(\d{2,3})\b/g)].map(m=>Number(m[1])*100);
+      const ft = [...u.matchAll(/\b(\d{3,5})\s*FT\b/g)].map(m=>Number(m[1]));
+      const nums = fl.concat(ft);
+      if (nums.length) { low = low===null ? Math.min(...nums) : Math.min(low,...nums); high=Math.max(...nums); }
+      if (/\bUNL\b/.test(u)) high=Infinity;
+      const fmt = v => v===0?'SFC':v===Infinity?'UNL':`FL${String(Math.round(v/100)).padStart(3,'0')}`;
+      return {low,high,label:(low===null&&high===null)?'고도 미확인':`${fmt(low===null?0:low)} ~ ${fmt(high===null?0:high)}`};
+    }
+
+    function severityForNotam(n) {
+      const u=String(n.rawText||'').toUpperCase();
+      if (/\b(CLSD|U\/S|UNSERVICEABLE|PROHIBITED|NO ENTRY)\b/.test(u)) return 'CRITICAL';
+      if (/\b(RESTRICTED|NOT AVBL|LIMITED|UNRELIABLE|CAUTION)\b/.test(u)) return 'WARNING';
+      return 'ADVISORY';
+    }
+
+    function parseRouteCoordinates(fplText) {
+      const text=String(fplText||'').toUpperCase().replace(/[Ø]/g,'0'), coords=[], tokens=[];
+      const re=/(?:^|\s)(\d{2,6})([NS])(\d{3,7})([EW])(?=\s|$|\/)/g; let m;
+      while((m=re.exec(text))){
+        const la=m[1], lo=m[3];
+        let lat=la.length===2?+la:la.length===4?+(la.slice(0,2))+ +(la.slice(2))/60:+la.slice(0,2)+ +la.slice(2,4)/60 + +la.slice(4)/3600;
+        let lon=lo.length===3?+lo:lo.length===5?+(lo.slice(0,3))+ +(lo.slice(3))/60:+lo.slice(0,3)+ +lo.slice(3,5)/60 + +lo.slice(5)/3600;
+        if(m[2]==='S') lat=-lat; if(m[4]==='W') lon=-lon;
+        coords.push([lat,lon]); tokens.push(m[0].trim());
+      }
+      return {coords,tokens};
+    }
+
+    function pointInPolygon(p,poly){
+      if(!poly||poly.length<3)return false;
+      const x=p[1],y=p[0]; let inside=false;
+      for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+        const xi=poly[i][1],yi=poly[i][0],xj=poly[j][1],yj=poly[j][0];
+        if(((yi>y)!==(yj>y)) && x < (xj-xi)*(y-yi)/(yj-yi+Number.EPSILON)+xi) inside=!inside;
+      }
+      return inside;
+    }
+    function orient(a,b,c){const v=(b[1]-a[1])*(c[0]-a[0])-(b[0]-a[0])*(c[1]-a[1]);return Math.abs(v)<1e-10?0:v>0?1:-1;}
+    function segmentsIntersect(a,b,c,d){const o1=orient(a,b,c),o2=orient(a,b,d),o3=orient(c,d,a),o4=orient(c,d,b);return o1!==o2&&o3!==o4;}
+    function routeIntersectsPolygon(route,poly){
+      if(!route.length||!poly||poly.length<3)return false;
+      if(route.some(p=>pointInPolygon(p,poly)))return true;
+      for(let i=1;i<route.length;i++)for(let j=0;j<poly.length;j++)if(segmentsIntersect(route[i-1],route[i],poly[j],poly[(j+1)%poly.length]))return true;
+      return false;
+    }
+    function scheduleIntervals(sch,dayMs){
+      const dt=new Date(dayMs), dow=['SUN','MON','TUE','WED','THU','FRI','SAT'][dt.getUTCDay()], dom=dt.getUTCDate(), res=[];
+      const add=(a,b)=>res.push([+a.slice(0,2)*60+ +a.slice(2),+b.slice(0,2)*60+ +b.slice(2)]);
+      const t=sch.replace(/\s+/g,' ').trim();
+      if(/^DLY\b/.test(t)){for(const m of t.matchAll(/(\d{4})\s*[-\/]\s*(\d{4})/g))add(m[1],m[2]);return res;}
+      if(/\b(MON|TUE|WED|THU|FRI|SAT|SUN)\b/.test(t)){for(const m of t.matchAll(/\b(MON|TUE|WED|THU|FRI|SAT|SUN)\s+(\d{4})\s*[-\/]\s*(\d{4})/g))if(m[1]===dow)add(m[2],m[3]);return res;}
+      const tm=t.match(/(\d{4})\s*[-\/]\s*(\d{4})\s*$/); if(!tm)return null;
+      const days=new Set();
+      for(const m of t.slice(0,tm.index).matchAll(/(\d{1,2})(?:\s*-\s*(\d{1,2}))?/g)){const a=+m[1],b=m[2]?+m[2]:a;for(let d=a;d<=b;d++)days.add(d);}
+      if(days.has(dom))add(tm[1],tm[2]);
+      return res;
+    }
+    function scheduleActive(n,ws,we){
+      if(!n.schedule)return true;
+      const DAY=864e5,[vf,vt]=notamRange(n);
+      for(let d=Math.floor(ws/DAY)*DAY-DAY;d<=we;d+=DAY){
+        const iv=scheduleIntervals(n.schedule,d); if(iv===null)return true;
+        for(const [a,b] of iv){const st=d+a*6e4,en=d+(b<a?b+1440:b)*6e4;
+          if(st<=we&&en>=ws&&(vf===null||en>=vf)&&(vt===null||vt===Infinity||st<=vt))return true;}
+      }
+      return false;
+    }
+    function routeHitInfo(poly){
+      const R=routeCoordinates;
+      for(const sh of [0,-360,360]){
+        const pl=sh?poly.map(p=>[p[0],p[1]+sh]):poly; let lo=Infinity,hi=-1;
+        R.forEach((p,i)=>{if(pointInPolygon(p,pl)){lo=Math.min(lo,i);hi=Math.max(hi,i);}});
+        for(let i=1;i<R.length;i++)for(let j=0;j<pl.length;j++)if(segmentsIntersect(R[i-1],R[i],pl[j],pl[(j+1)%pl.length])){lo=Math.min(lo,i-1);hi=Math.max(hi,i);}
+        if(hi>=0)return {lo,hi};
+      }
+      return null;
+    }
+    function routeHitsPoly(poly){
+      return [0,-360,360].some(sh=>routeIntersectsPolygon(routeCoordinates,sh?poly.map(p=>[p[0],p[1]+sh]):poly));
+    }
+    function flightWindow(){
+      const [y,m,d]=(currentRouteInfo.flightDate||'').split('-').map(Number);
+      if(!y||currentRouteInfo.etdMinutes===null)return null;
+      const b=Date.UTC(y,m-1,d);
+      return {etd:b+currentRouteInfo.etdMinutes*6e4, eta:b+currentRouteInfo.etaMinutes*6e4};
+    }
+    function notamRange(n){
+      let vf=parseOfpTimestamp(n.validFrom), vt=parseOfpTimestamp(n.validTo);
+      if(vf===null&&vt===null&&n.validity&&n.validity.includes('~')){const [a,b]=n.validity.split('~');vf=parseOfpTimestamp(a);vt=parseOfpTimestamp(b);}
+      return [vf,vt];
+    }
+    function notamIsActive(n,ws,we){
+      if(ws===undefined){const w=flightWindow();if(!w)return true;ws=w.etd;we=w.eta;}
+      const [vf,vt]=notamRange(n);
+      return (vf===null||vf<=we)&&(vt===null||vt===Infinity||vt>=ws)&&scheduleActive(n,ws,we);
+    }
+    function runConflictAnalysis(){
+      const results=[]; let critical=0,warning=0,advisory=0,routeHits=0,altitudeHits=0;
+      const w=flightWindow(), H=36e5, r=currentRouteInfo, lv=r.levels||[];
+      const cand=[...package3AirspaceNotams.map(n=>({n,air:true})),...package1AirportNotams.filter(n=>[r.dep,r.dest,r.altn].includes(n.airport)).map(n=>({n,air:false}))];
+      cand.forEach(({n,air})=>{
+        let ws,we,routeHit=false,seg='';
+        if(air){
+          const hit=routeHitInfo(n.latlngs||[]); if(!hit)return; routeHit=true;
+          seg=(routeTokens[hit.lo]||'')+(hit.hi>hit.lo?' ~ '+(routeTokens[hit.hi]||''):'');
+          if(w&&routeElapsed.length===routeCoordinates.length&&routeElapsed[hit.lo]!=null&&routeElapsed[hit.hi]!=null){ws=w.etd+routeElapsed[hit.lo]*6e4-18e5;we=w.etd+routeElapsed[hit.hi]*6e4+18e5;}
+        } else if(w){[ws,we]=n.airport===r.dep?[w.etd,w.etd+H]:[w.eta-H,w.eta+H];}
+        if(!notamIsActive(n,ws,we))return;
+        const alt=parseAltitudeLimit(n.limits||n.rawText);
+        const altitudeHit=routeHit&&((alt.low===null&&alt.high===null)||!lv.length||lv.some(l=>l>=(alt.low??0)&&l<=(alt.high??Infinity)));
+        const sev=n.severity||severityForNotam(n);
+        if(sev==='CRITICAL')critical++;else if(sev==='WARNING')warning++;else advisory++;
+        if(routeHit)routeHits++; if(altitudeHit)altitudeHits++;
+        results.push({n,sev,routeHit,altitudeHit,seg});
+      });
+      const SEV_ORDER={CRITICAL:0,WARNING:1,ADVISORY:2};
+      analysisResults=results.sort((a,b)=>SEV_ORDER[a.sev]-SEV_ORDER[b.sev]);
+      document.getElementById('risk-critical').textContent=critical;
+      document.getElementById('risk-warning').textContent=warning;
+      document.getElementById('risk-advisory').textContent=advisory;
+      document.getElementById('risk-route').textContent=routeHits;
+      document.getElementById('risk-altitude').textContent=altitudeHits;
+      document.getElementById('route-point-count').textContent=`좌표점 ${routeCoordinates.length}`;
+      const box=document.getElementById('conflict-list');
+      box.innerHTML=analysisResults.length?analysisResults.slice(0,20).map(r=>{
+        const c=r.sev==='CRITICAL'?'rose':r.sev==='WARNING'?'amber':'sky';
+        return `<div class="bg-slate-950 p-3 rounded-xl border border-${c}-900/50"><div class="flex justify-between gap-2"><span class="font-bold font-mono-code text-${c}-400 text-xs">${r.n.notamId||'NOTAM'}</span><span class="px-2 py-0.5 rounded bg-${c}-950 text-${c}-300 border border-${c}-800 text-[9px] font-bold">${r.sev}</span></div><div class="flex items-center gap-1 text-[10px] text-sky-300 font-mono-code mt-1"><i data-lucide="clock" class="w-3 h-3 text-sky-400 flex-shrink-0"></i>${esc(r.n.validity || (r.n.validFrom ? `${r.n.validFrom} ~ ${r.n.validTo}` : '상시 / PERM'))}${r.n.schedule?' · '+esc(r.n.schedule):''}</div><div class="text-[10px] text-slate-400 mt-1">${r.routeHit?'경로 교차'+(r.seg?' ('+r.seg+', 통과시각 ±30분 기준)':''):'공항 시설 NOTAM'}</div><div class="text-[10px] text-slate-300 mt-1">${esc(r.n.rawText||r.n.summary||'')}</div></div>`;
+      }).join('') : `<div class="p-4 text-center text-xs text-slate-500 bg-slate-950/50 rounded-xl border border-slate-800/60 md:col-span-2">활성 운항 영향 항목 없음 또는 정밀 좌표 데이터 부족</div>`;
+      if (window.lucide) lucide.createIcons();
+      renderBriefing();
+      renderMap(true);
+    }
+    let notamMap=null, notamLayer=null, notamTiles=null;
+    function renderMap(fit){
+      const box=document.getElementById('notam-map'); if(!box)return;
+      if(!window.L){box.innerHTML='<div class="p-6 text-xs text-slate-500">지도 라이브러리(Leaflet)를 불러오지 못했습니다. 인터넷 연결을 확인하세요.</div>';return;}
+      if(!notamMap){
+        notamMap=L.map(box,{minZoom:2,zoomControl:true}).setView([45,-160],3);
+        notamLayer=L.layerGroup().addTo(notamMap);
+        notamTiles=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:8,attribution:'© OpenStreetMap'});
+      }
+      const useTiles=document.getElementById('map-chk-tiles')?.checked;
+      if(useTiles&&!notamMap.hasLayer(notamTiles))notamTiles.addTo(notamMap);
+      if(!useTiles&&notamMap.hasLayer(notamTiles))notamMap.removeLayer(notamTiles);
+      notamLayer.clearLayers();
+      const showAll=document.getElementById('map-chk-all')?.checked, w=flightWindow(), R=routeCoordinates, bounds=[];
+      const meanLon=R.length?R.reduce((a,p)=>a+p[1],0)/R.length:0;
+      let shown=0,hits=0,live=0;
+      package3AirspaceNotams.forEach(n=>{
+        const poly=n.latlngs||[]; if(poly.length<3)return;
+        const pm=poly.reduce((a,p)=>a+p[1],0)/poly.length;
+        const sh=R.length?[0,-360,360].reduce((b,c)=>Math.abs(pm+c-meanLon)<Math.abs(pm+b-meanLon)?c:b):0;
+        const pl=poly.map(p=>[p[0],p[1]+sh]);
+        const hit=R.length?routeHitInfo(poly):null;
+        let ws,we,pass='';
+        if(hit&&w&&routeElapsed.length===R.length&&routeElapsed[hit.lo]!=null&&routeElapsed[hit.hi]!=null){
+          ws=w.etd+routeElapsed[hit.lo]*6e4-18e5; we=w.etd+routeElapsed[hit.hi]*6e4+18e5;
+          pass=formatMinutes(currentRouteInfo.etdMinutes+routeElapsed[hit.lo])+'Z ~ '+formatMinutes(currentRouteInfo.etdMinutes+routeElapsed[hit.hi])+'Z';
+        }
+        const active=notamIsActive(n,ws,we);
+        if(!showAll&&!hit)return;
+        let color,dash=null,state;
+        if(hit&&active){color='#f43f5e';state='경로 교차 · 통과시각 유효';}
+        else if(hit){color='#f59e0b';dash='6 4';state='경로 교차 · 통과시각 비활성';}
+        else{color='#64748b';dash='3 5';state='경로 미교차';}
+        shown++; if(hit)hits++; if(hit&&active)live++;
+        const seg=hit?(routeTokens[hit.lo]||'')+(hit.hi>hit.lo?' ~ '+(routeTokens[hit.hi]||''):''):'';
+        const lyr=L.polygon(pl,{color,weight:hit&&active?2.5:1.5,dashArray:dash,fillColor:color,fillOpacity:hit&&active?.25:.08}).addTo(notamLayer);
+        lyr.bindTooltip(esc(n.notamId),{sticky:true});
+        lyr.bindPopup(`<b>${esc(n.notamId)}</b><br>${state}${seg?'<br>구간: '+esc(seg):''}${pass?'<br>통과: '+pass:''}<br>고도: ${esc(n.limits||'-')}<br>유효: ${esc(n.validity||'-')}${n.schedule?'<br>운용: '+esc(n.schedule):''}<br>${esc(n.summary||'')}`);
+        if(hit||!R.length)pl.forEach(p=>bounds.push(p));
+      });
+      if(R.length>=2){
+        L.polyline(R,{color:'#38bdf8',weight:3}).addTo(notamLayer);
+        R.forEach((p,i)=>{
+          const t=routeElapsed[i]!=null&&currentRouteInfo.etdMinutes!==null?' '+formatMinutes(currentRouteInfo.etdMinutes+routeElapsed[i])+'Z':'';
+          L.circleMarker(p,{radius:i===0||i===R.length-1?5:2.5,color:'#e0f2fe',weight:1,fillColor:'#0ea5e9',fillOpacity:1}).bindTooltip(esc((routeTokens[i]||'WPT')+t)).addTo(notamLayer);
+          bounds.push(p);
+        });
+        if(/^(OFP|샘플|FPL \+)/.test(routeSource)){
+          L.marker(R[0],{opacity:0}).bindTooltip('DEP '+esc(currentRouteInfo.dep||''),{permanent:true,direction:'right'}).addTo(notamLayer);
+          L.marker(R[R.length-1],{opacity:0}).bindTooltip('DEST '+esc(currentRouteInfo.dest||''),{permanent:true,direction:'left'}).addTo(notamLayer);
+        }
+        const fm=routeFir.map((f,i)=>f?i:-1).filter(i=>i>=0);
+        if(routeFir.length===R.length)fm.forEach((i,k)=>{
+          const code=routeFir[i],end=k+1<fm.length?fm[k+1]:R.length-1; let ws,we,tm='';
+          if(w&&routeElapsed[i]!=null&&routeElapsed[end]!=null){ws=w.etd+routeElapsed[i]*6e4-18e5;we=w.etd+routeElapsed[end]*6e4+18e5;tm=formatMinutes(currentRouteInfo.etdMinutes+routeElapsed[i])+'Z~'+formatMinutes(currentRouteInfo.etdMinutes+routeElapsed[end])+'Z';}
+          const all=package3FirNotams.filter(n=>n.airport===code),act=all.filter(n=>notamIsActive(n,ws,we));
+          const geo=package3AirspaceNotams.filter(n=>n.airport===code).length;
+          const html=`<b>${esc(code)} FIR</b> ${tm}<br>좌표 없는 NOTAM 유효 ${act.length}/${all.length}건 · 좌표 공역 ${geo}건<hr style="margin:3px 0">`+act.slice(0,12).map(n=>'• '+esc(n.notamId.split(' ').pop())+' '+esc((n.summary||'').slice(0,60))).join('<br>')+(act.length>12?`<br>… 외 ${act.length-12}건`:'');
+          L.marker(R[i],{icon:L.divIcon({className:'',iconSize:[0,0],html:`<div style="background:#0f766e;color:#ecfeff;border:1px solid #5eead4;border-radius:6px;padding:0 4px;font:600 10px monospace;white-space:nowrap;transform:translate(-50%,-140%)">${esc(code)} ${act.length}</div>`})}).bindPopup(html,{maxWidth:280}).addTo(notamLayer);
+        });
+      }
+      const sm=document.getElementById('map-summary');
+      if(sm){sm.textContent=`경로: ${routeSource} | 표시 ${shown}건 · 경로 교차 ${hits}건 (유효 ${live}건)`;sm.style.color=/부정확/.test(routeSource)?'#fb7185':'';}
+      if(fit&&bounds.length)notamMap.fitBounds(bounds,{padding:[24,24]});
+      setTimeout(()=>notamMap.invalidateSize(),0);
+    }
+    function renderBriefing(){
+      const lines=[`NOTAM 운항 브리핑 | ${new Date().toLocaleString('ko-KR')}`,`FPL ${currentRouteInfo.dep||'--'} → ${currentRouteInfo.dest||'--'} | FPL 좌표 ${routeCoordinates.length}개`,''];
+      const stripTags = h => String(h||'').replace(/<[^>]+>/g,'').replace(/&amp;/g,'&');
+      lines.push('■ 공항별 요약');
+      [['DEP',currentRouteInfo.dep,'출발'],['DEST',currentRouteInfo.dest,'도착'],['ALTN',currentRouteInfo.altn,'교체']].forEach(([role,ap,kr])=>{
+        if(!ap) return;
+        const sum=buildAirportSummary(role,ap);
+        lines.push(`• ${kr} ${ap} (${sum.timeLabel}): ${stripTags(sum.text)}`);
+      });
+      const enr=buildEnrouteSummary();
+      if(enr){ lines.push('','■ 항로(FIR/공역) 요약', ...enr.text.split('<br>').filter(Boolean).map(l=>'• '+stripTags(l))); }
+      lines.push('','■ 전체 영향 항목');
+      if(!analysisResults.length) lines.push('• 현재 로드된 데이터에서 운항 영향 항목이 표시되지 않았습니다.');
+      else analysisResults.slice(0,20).forEach(r=>lines.push(`• [${r.sev}] ${r.n.notamId||'NOTAM'} — ${r.routeHit?'경로 교차'+(r.seg?' ('+r.seg+')':''):'공항/시설 영향'}${r.altitudeHit?' / 고도정보 확인':''}`));
+      lines.push('','※ 보조 분석 결과입니다. 실제 운항 판단은 최신 공식 NOTAM/AIS 및 회사 운항절차와 원문 확인을 기준으로 하십시오.');
+      document.getElementById('briefing-output').textContent=lines.join('\n');
+      document.getElementById('analysis-timestamp').textContent=new Date().toLocaleString('ko-KR');
+    }
+
+    function parseRouteString(fplText) {
+      const normalized = fplText.replace(/[Ø]/g, '0').trim();
+      let dep = "", dest = "", altn = "", etdMin = 0, eetMin = 0;
+      let fDate = new Date().toISOString().slice(0, 10);
+      const dofMatch = normalized.match(/DOF\/(\d{2})(\d{2})(\d{2})/);
+      if (dofMatch) fDate = `20${dofMatch[1]}-${dofMatch[2]}-${dofMatch[3]}`;
+      // Item 13: 출발공항+ETD(UTC) / Item 16: 도착공항+총 EET(비행시간), 교체공항
+      const apt = [...normalized.matchAll(/-([A-Z]{4})(\d{4})(?:\s+([A-Z]{4})(?=\s|$))?/g)];
+      if (apt.length >= 1) { dep = apt[0][1]; etdMin = +apt[0][2].slice(0,2)*60 + +apt[0][2].slice(2,4); }
+      if (apt.length >= 2) { dest = apt[1][1]; eetMin = +apt[1][2].slice(0,2)*60 + +apt[1][2].slice(2,4); if (apt[1][3]) altn = apt[1][3]; }
+      const levels = [...normalized.matchAll(/(?:^|[\s\/])[FA](\d{3})(?=[\s\/]|$)|[NKM]\d{3,4}[FA](\d{3})(?=[\s\/]|$)/g)].map(m => (+(m[1]||m[2]))*100);
+      currentRouteInfo = { dep, dest, altn, etdMinutes: etdMin, etaMinutes: etdMin + eetMin, flightDate: fDate, levels: [...new Set(levels)] };
+    }
+
+    const EQ10A={S:'표준(VHF/VOR/ILS)',D:'DME',E1:'FMC WPR ACARS',E2:'D-FIS ACARS',E3:'PDC ACARS',F:'ADF',G:'GNSS',H:'HF',I:'INS',J1:'CPDLC ATN VDL2',J2:'CPDLC FANS HFDL',J3:'CPDLC FANS VDL-A',J4:'CPDLC FANS VDL2',J5:'CPDLC FANS INMARSAT',J6:'CPDLC FANS MTSAT',J7:'CPDLC FANS Iridium',K:'MLS',L:'ILS',M1:'SATVOICE INMARSAT',M2:'SATVOICE MTSAT',M3:'SATVOICE Iridium',O:'VOR',P1:'RCP400',P2:'RCP240',R:'PBN 인가',T:'TACAN',U:'UHF',V:'VHF',W:'RVSM',X:'MNPS/NAT HLA',Y:'VHF 8.33',Z:'기타(Item18 참조)'};
+    const SSR={N:'없음',A:'Mode A',C:'Mode A/C',E:'Mode S(ID+고도+ES)',H:'Mode S(ID+고도+EHS)',I:'Mode S(ID)',L:'Mode S(ID+고도+ES+EHS)',P:'Mode S(고도)',S:'Mode S(ID+고도)',X:'Mode S'};
+    const ADSB={B1:'ADS-B 1090 Out',B2:'ADS-B 1090 Out/In',U1:'ADS-B UAT Out',U2:'ADS-B UAT Out/In',V1:'ADS-B VDL4 Out',V2:'ADS-B VDL4 Out/In',D1:'ADS-C FANS1/A',G1:'ADS-C ATN'};
+    const PBN={A1:'RNAV10',B1:'RNAV5',B2:'RNAV5 GNSS',B3:'RNAV5 DME/DME',B4:'RNAV5 VOR/DME',B5:'RNAV5 INS/IRS',C1:'RNAV2',C2:'RNAV2 GNSS',C3:'RNAV2 DME/DME',C4:'RNAV2 DME/DME/IRU',D1:'RNAV1',D2:'RNAV1 GNSS',D3:'RNAV1 DME/DME',D4:'RNAV1 DME/DME/IRU',L1:'RNP4',O1:'Basic RNP1',O2:'Basic RNP1 GNSS',O3:'Basic RNP1 DME/DME',O4:'Basic RNP1 DME/DME/IRU',S1:'RNP APCH',S2:'RNP APCH+BaroVNAV',T1:'RNP AR APCH(RF)',T2:'RNP AR APCH(RF 없음)'};
+    function decodeFplDetailsDynamically(fplText) {
+      if(!fplText) return;
+      const norm = fplText.replace(/[Ø]/g, '0');
+      const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+      const callsign = norm.match(/\(FPL-([A-Z0-9]+)/)?.[1] || '--';
+      const ac = norm.match(/-([A-Z0-9]+)\/([A-Z])-/);
+      const reg = norm.match(/REG\/([A-Z0-9]+)/)?.[1] || '--';
+      set('info-callsign', `${callsign} / ${reg}`);
+      set('info-aircraft', ac ? `${ac[1]} / ${ac[2]}` : '--');
+      const { dep, dest, etdMinutes, etaMinutes } = currentRouteInfo;
+      set('info-dep', dep ? `${dep} (${formatMinutes(etdMinutes)}Z)` : '--');
+      set('info-dest', dest ? `${dest} (${formatMinutes(etaMinutes % 1440)}Z)` : '--');
+      const eq = norm.match(/-[A-Z0-9]+\/[A-Z]-([A-Z0-9]+)\/([A-Z0-9]+)/);
+      if (eq) {
+        const t10a = []; for (let i = 0; i < eq[1].length;) { const two = eq[1].substr(i, 2); if (EQ10A[two]) { t10a.push(two); i += 2; } else { t10a.push(eq[1][i]); i++; } }
+        set('decoded-item10a', `<span class="text-sky-300 font-bold">${esc(eq[1])}</span><br>` + t10a.map(t => `${esc(t)}=${esc(EQ10A[t] || '?')}`).join(' · '));
+        const t10b = eq[2].match(/[BUVDG]\d|[NACEHILPSX]/g) || [];
+        set('decoded-item10b', `<span class="text-emerald-300 font-bold">${esc(eq[2])}</span><br>` + t10b.map(t => `${esc(t)}=${esc(ADSB[t] || SSR[t] || '?')}`).join(' · '));
+      } else { set('decoded-item10a', '미기재'); set('decoded-item10b', '미기재'); }
+      const pbn = norm.match(/PBN\/([A-Z0-9]+)/)?.[1];
+      const sel = norm.match(/SEL\/([A-Z0-9]+)/)?.[1] || '미기재', code = norm.match(/CODE\/([A-Z0-9]+)/)?.[1] || '미기재';
+      const pbnTxt = pbn ? (pbn.match(/.{2}/g) || []).map(c => `${c}=${PBN[c] || '?'}`).join(' · ') : '미기재';
+      set('decoded-item18', `• <span class="text-indigo-300 font-bold">PBN:</span> ${esc(pbnTxt)}<br>• <span class="text-indigo-300 font-bold">SELCAL:</span> ${esc(sel)} | <span class="text-indigo-300 font-bold">CODE:</span> ${esc(code)}`);
+      const endur = norm.match(/-E\/(\d{4})/)?.[1];
+      const mp = (v, m) => v ? [...v].map(c => m[c] || c).join(', ') : '미기재';
+      const rv = norm.match(/\sR\/([A-Z]+)/)?.[1], sv = norm.match(/\sS\/([A-Z]+)/)?.[1], jv = norm.match(/\sJ\/([A-Z]+)/)?.[1], dv = norm.match(/\sD\/(\d+)\s+(\d+)\s+([A-Z]+)/);
+      set('decoded-item19', `• <span class="text-rose-300 font-bold">체공:</span> ${endur ? endur.slice(0,2)+'시간 '+endur.slice(2)+'분' : '미기재'}<br>• <span class="text-rose-300 font-bold">무선:</span> ${mp(rv,{U:'UHF',V:'VHF',E:'ELT'})}<br>• <span class="text-rose-300 font-bold">생존장비:</span> ${mp(sv,{P:'극지',D:'사막',M:'해상',J:'정글'})}<br>• <span class="text-rose-300 font-bold">구명동의:</span> ${mp(jv,{L:'라이트',F:'형광',U:'UHF',V:'VHF'})}<br>• <span class="text-rose-300 font-bold">구명정:</span> ${dv ? dv[1]+'척 / '+dv[2]+'명 / '+esc(dv[3]) : '미기재'}`);
+    }
+
+    function applyFlightPlan(fplText) {
+      if(!fplText){ routeCoordinates=[]; routeTokens=[]; routeElapsed=[]; routeFir=[]; routeSource='없음'; currentRouteInfo={dep:"",dest:"",altn:"",etdMinutes:null,etaMinutes:null,flightDate:""}; renderPackage1Notams(); runConflictAnalysis(); return; }
+      parseRouteString(fplText);
+      saveToHistory(fplText);
+      decodeFplDetailsDynamically(fplText);
+      const p=parseRouteCoordinates(fplText);
+      routeCoordinates=p.coords; routeTokens=p.tokens; routeElapsed=[]; routeFir=[]; routeSource='FPL 좌표만 (부정확 — 항법로그/로컬 fix 없음)';
+      const rr=resolveFplRoute(fplText);
+      if(rr.pts.length>=2&&rr.pts.length>=p.coords.length){routeCoordinates=rr.pts; routeTokens=rr.names; routeSource=`FPL + 로컬 fix DB (${rr.pts.length}점, 좌표 미확인 ${rr.unres.length}개: ${rr.unres.slice(0,8).join(' ')})`;}
+      const rc=document.getElementById('route-coord-preview');
+      const lowConf = routeSource.includes('부정확');
+      if(rc){
+        rc.textContent = routeCoordinates.length
+          ? `${routeSource} — ${routeTokens.slice(0,12).join(' · ')}${routeTokens.length>12?' ...':''}`
+          : 'FPL에 직접 좌표가 없고 학습된 로컬 fix DB에도 없어 경로를 그릴 수 없습니다. 실제 OFP PDF를 업로드하면 항법로그 좌표로 정밀 분석됩니다.';
+        rc.classList.toggle('text-amber-400', lowConf || !routeCoordinates.length);
+        rc.classList.toggle('text-slate-500', !lowConf && !!routeCoordinates.length);
+      }
+      if(lowConf) console.warn('경로 정밀도 낮음:', routeSource);
+      renderPackage1Notams();
+      runConflictAnalysis();
+      renderFirNotams();
+      updateFixDbStatus();
+    }
+
+    function saveToHistory(fpl) {
+      let history = JSON.parse(localStorage.getItem(RECENT_ROUTES_KEY) || "[]");
+      const title = `${currentRouteInfo.dep} ➔ ${currentRouteInfo.dest} (${new Date().toLocaleTimeString().slice(0,5)})`;
+      history = history.filter(h => h.fpl !== fpl);
+      history.unshift({ title, fpl });
+      if(history.length > 5) history.pop();
+      localStorage.setItem(RECENT_ROUTES_KEY, JSON.stringify(history));
+      updateRecentRoutesDropdown();
+    }
+    
+    function updateRecentRoutesDropdown() {
+      const select = document.getElementById('recent-routes-select');
+      if(!select) return;
+      const history = JSON.parse(localStorage.getItem(RECENT_ROUTES_KEY) || "[]");
+      select.innerHTML = '<option value="">최근 저장 경로 (최대 5개)...</option>' + history.map((h, i) => `<option value="${i}">${h.title}</option>`).join('');
+    }
+
+    function renderPackage1Notams() {
+      const depTab = document.getElementById('tab-label-dep');
+      const destTab = document.getElementById('tab-label-dest');
+      const chkLabel = document.getElementById('chk-pkg1-label');
+      const altnTab = document.getElementById('tab-label-altn');
+      if (depTab) depTab.textContent = `출발공항 (${currentRouteInfo.dep})`;
+      if (destTab) destTab.textContent = `목적공항 (${currentRouteInfo.dest})`;
+      if (altnTab) altnTab.textContent = `교체공항 (${currentRouteInfo.altn || '없음'})`;
+      if (chkLabel) chkLabel.textContent = currentPkg1Tab === 'DEP' ? '운항시간 필터링 (출발 ETD +1h)' : '도착시간대 필터링 (ETA ±1h)';
+      
+      const targetAirport = currentPkg1Tab === "DEP" ? currentRouteInfo.dep : (currentPkg1Tab === "ALTN" ? currentRouteInfo.altn : currentRouteInfo.dest);
+      let filtered = package1AirportNotams.filter(n => n.airport === targetAirport);
+      
+      if (pkg1TimeFilterActive) {
+        const [y, m, d] = (currentRouteInfo.flightDate || "2026-09-24").split('-').map(Number);
+        
+        let winStart, winEnd;
+        if (currentPkg1Tab === "DEP") {
+          winStart = Date.UTC(y, m - 1, d, Math.floor(currentRouteInfo.etdMinutes / 60), currentRouteInfo.etdMinutes % 60);
+          winEnd = winStart + 60 * 60 * 1000;
+        } else {
+          const baseEta = Date.UTC(y, m - 1, d, Math.floor(currentRouteInfo.etaMinutes / 60), currentRouteInfo.etaMinutes % 60);
+          winStart = baseEta - 60 * 60 * 1000;
+          winEnd = baseEta + 60 * 60 * 1000;
+        }
+
+        filtered = filtered.filter(n => {
+          const from = parseOfpTimestamp(n.validFrom);
+          const to = parseOfpTimestamp(n.validTo);
+          
+          if (from === null && to === null) return true;
+          if (to === Infinity || (n.validTo && (n.validTo.includes("PERM") || n.validTo.includes("UFN")))) {
+            if (from !== null && from > winEnd) return false;
+            return true;
+          }
+          if (from !== null && from > winEnd) return false;
+          if (to !== null && to < winStart) return false;
+          return true;
+        });
+        filtered = filtered.filter(n => scheduleActive(n, winStart, winEnd));
+      }
+
+      filtered.sort((a,b) => (PKG1_CATEGORY_CONFIG[a.category]?.priority||99) - (PKG1_CATEGORY_CONFIG[b.category]?.priority||99));
+      
+      const container = document.getElementById('pkg1-notam-list');
+      if(!container) return;
+      if(filtered.length === 0) { 
+        container.innerHTML = `<div class="p-3 text-center text-xs text-slate-500 bg-slate-950/50 rounded-xl">${targetAirport?`해당 운항시간대(${currentPkg1Tab}: ${currentPkg1Tab==='DEP'?'ETD +1시간':'ETA ±1시간'})에 유효한 공항 노탐이 없습니다.`:'교체공항 정보가 FPL에 없습니다.'}</div>`; 
+        return; 
+      }
+      
+      container.innerHTML = filtered.map(n => {
+        const c = PKG1_CATEGORY_CONFIG[n.category] || PKG1_CATEGORY_CONFIG.GEN;
+        const validityText = (n.validFrom || n.validTo) ? `${n.validFrom || '시작'} ~ ${n.validTo || 'PERM'}` : '상시 유효 (PERM)';
+        return `
+          <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 cursor-pointer hover:border-slate-600 transition-all flex flex-col gap-1.5" onclick="viewNotamDetail('${n.notamId}', 'PKG1')">
+            <div class="flex items-center justify-between gap-1">
+              <span class="font-bold text-xs text-amber-300 font-mono-code">${n.notamId}</span>
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${c.color}">${c.label}</span>
+            </div>
+            <div class="flex items-center gap-1.5 text-[10px] text-sky-300 font-mono-code">
+              <i data-lucide="clock" class="w-3 h-3 text-sky-400 flex-shrink-0"></i>
+              <span class="truncate">${validityText}</span>
+            </div>
+            <p class="text-[11px] text-slate-300 line-clamp-2 leading-relaxed mt-0.5">${esc(n.summary || n.rawText)}</p>
+          </div>
+        `;
+      }).join('');
+      if (window.lucide) lucide.createIcons();
+      renderPilotPriority();
+    }
+    // 조종사 우선순위 8개 항목(RWY/TWY/GATE/VDGS/NAV/APCH_MIN/MISSED_APCH/SECURITY)만 모아
+    // DEP·DEST·ALTN 전체에서, 운항 해당 시간대 활성 여부와 함께 보여준다.
+    function airportOpsWindow(airport){
+      const w=flightWindow(); if(!w) return null;
+      if(airport && airport===currentRouteInfo.dep) return [w.etd, w.etd+36e5];
+      if(airport && (airport===currentRouteInfo.dest || airport===currentRouteInfo.altn)) return [w.eta-36e5, w.eta+36e5];
+      return null;
+    }
+    function renderPilotPriority(){
+      const container=document.getElementById('pilot-priority-list'), badgeBox=document.getElementById('pilot-priority-badge');
+      if(!container) return;
+      const airports=[currentRouteInfo.dep,currentRouteInfo.dest,currentRouteInfo.altn].filter(Boolean);
+      const rows=[];
+      (package1AirportNotams||[]).forEach(n=>{
+        if(!airports.includes(n.airport) || !PILOT_PRIORITY_CATS.includes(n.category)) return;
+        const win=airportOpsWindow(n.airport);
+        const active = win ? notamIsActive(n, win[0], win[1]) : true;
+        rows.push({n, active, source:'PKG1'});
+      });
+      // 공역(Package 3)·FIR 통과 NOTAM 중 항법장비·보안 관련만 추려서 함께 표시 (활주로/유도로 등은 공항 개념이라 제외)
+      const ENROUTE_CATS = ["NAV","SECURITY"];
+      (package3AirspaceNotams||[]).forEach(n=>{
+        const cat=classifyAirportNotamCategory(n.rawText||n.summary);
+        if(!ENROUTE_CATS.includes(cat)) return;
+        const hit = routeCoordinates.length ? routeHitInfo(n.latlngs||[]) : null;
+        if(!hit) return;
+        let ws,we; const w=flightWindow();
+        if(w && routeElapsed.length===routeCoordinates.length && routeElapsed[hit.lo]!=null && routeElapsed[hit.hi]!=null){
+          ws=w.etd+routeElapsed[hit.lo]*6e4-18e5; we=w.etd+routeElapsed[hit.hi]*6e4+18e5;
+        }
+        const active = notamIsActive(n, ws, we);
+        const seg=(routeTokens[hit.lo]||'')+(hit.hi>hit.lo?' ~ '+(routeTokens[hit.hi]||''):'');
+        rows.push({n:{...n, category:cat, airport: (seg||'경로상 공역')+' (공역)'}, active, source:'PKG3'});
+      });
+      const firSegs = firSegments();
+      (package3FirNotams||[]).forEach(n=>{
+        const cat=classifyAirportNotamCategory(n.rawText||n.summary);
+        if(!ENROUTE_CATS.includes(cat)) return;
+        const seg = firSegs.find(s=>s.fir===n.airport);
+        const active = seg ? notamIsActive(n, seg.enterAbs, seg.exitAbs) : true;
+        if(!seg && routeCoordinates.length) return; // 경로가 있는데 이 FIR을 통과 안 하면 제외
+        rows.push({n:{...n, category:cat, airport:(n.airport||'')+' FIR'}, active, source:'PKG3FIR'});
+      });
+      rows.sort((a,b)=>{
+        const pa=PKG1_CATEGORY_CONFIG[a.n.category]?.priority||99, pb=PKG1_CATEGORY_CONFIG[b.n.category]?.priority||99;
+        if(pa!==pb) return pa-pb;
+        return (b.active?1:0)-(a.active?1:0);
+      });
+      if(badgeBox){
+        badgeBox.innerHTML = PILOT_PRIORITY_CATS.map(c=>{
+          const cfg=PKG1_CATEGORY_CONFIG[c], cnt=rows.filter(r=>r.n.category===c && r.active).length;
+          const shortLabel=cfg.label.split(/[(/]/)[0].trim();
+          return `<span class="px-2 py-1 rounded-lg border text-[10px] font-bold flex items-center gap-1 ${cnt?cfg.color:'text-slate-600 bg-slate-900 border-slate-800'}"><i data-lucide="${cfg.icon}" class="w-3 h-3"></i>${esc(shortLabel)} ${cnt}</span>`;
+        }).join('');
+      }
+      if(!rows.length){
+        container.innerHTML = `<div class="p-4 text-center text-xs text-slate-500 italic bg-slate-950/50 rounded-xl border border-slate-800/60">${airports.length?'DEP/DEST/ALTN에서 우선순위 항목이 감지되지 않았습니다.':'FPL을 먼저 분석하세요.'}</div>`;
+      } else {
+        container.innerHTML = rows.map(r=>{
+          const cfg=PKG1_CATEGORY_CONFIG[r.n.category]||PKG1_CATEGORY_CONFIG.GEN;
+          const validityText=(r.n.validFrom||r.n.validTo)?`${r.n.validFrom||'시작'} ~ ${r.n.validTo||'PERM'}`:'상시 유효 (PERM)';
+          return `<div class="bg-slate-950 p-3 rounded-xl border ${r.active?'border-slate-700':'border-slate-800/50 opacity-50'} cursor-pointer hover:border-slate-600 transition-all flex flex-col gap-1.5" onclick="viewNotamDetail('${r.n.notamId}','${r.source||'PKG1'}')">
+            <div class="flex items-center justify-between gap-1 flex-wrap">
+              <span class="flex items-center gap-1.5 font-bold text-xs text-slate-200"><i data-lucide="${cfg.icon}" class="w-3.5 h-3.5 flex-shrink-0"></i>${esc(r.n.airport)} <span class="font-mono-code">${esc(r.n.notamId)}</span></span>
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${cfg.color}">${esc(cfg.label)}${r.active?'':' · 시간대 외'}</span>
+            </div>
+            <div class="flex items-center gap-1.5 text-[10px] text-sky-300 font-mono-code"><i data-lucide="clock" class="w-3 h-3 text-sky-400 flex-shrink-0"></i><span class="truncate">${esc(validityText)}${r.n.schedule?' · '+esc(r.n.schedule):''}</span></div>
+            <p class="text-[11px] text-slate-300 line-clamp-2 leading-relaxed mt-0.5">${esc(r.n.summary||r.n.rawText)}</p>
+          </div>`;
+        }).join('');
+      }
+      if (window.lucide) lucide.createIcons();
+      renderQuickBrief();
+    }
+    // 카테고리별로 원문에서 활주로/유도로/게이트/장비명 등 핵심 식별자를 뽑아 자연어 문장 재료로 쓴다.
+    // 정형화되지 않은 문구(FDC 절차 개정 등)는 무리하게 추출하지 않고 "N건"으로만 표기해 과신을 피한다.
+    const CATEGORY_EXTRACTORS = {
+      RWY: u => { const ids=[...new Set([...u.matchAll(/RWY\s*([0-9]{2}[LRC]?(?:\/[0-9]{2}[LRC]?)?)/g)].map(m=>m[1]))].slice(0,4);
+        return {ids, verb:/\bCLSD\b|\bCLOSED\b|\bNOT AVBL\b/.test(u)?'폐쇄/사용불가':'관련 사항'}; },
+      TWY: u => { const ids=[...new Set([...u.matchAll(/TWY\s*([A-Z]\d{0,2})/g)].map(m=>m[1]))].slice(0,5);
+        return {ids, verb:/\bCLSD\b|\bCLOSED\b/.test(u)?'폐쇄':'관련 사항'}; },
+      GATE: u => { const ids=[...new Set([...u.matchAll(/\b(?:GATE|STAND)\s*([A-Z]?\d{1,3})\b/g)].map(m=>m[1]))].slice(0,5);
+        return {ids, verb:/\bCLSD\b|\bCLOSED\b/.test(u)?'폐쇄':'관련 사항'}; },
+      VDGS: u => { const ids=[...new Set([...u.matchAll(/\bSTAND\s*([A-Z]?\d{1,3})\b/g)].map(m=>m[1]))].slice(0,5);
+        return {ids, verb:'사용불가'}; },
+      NAV: u => { const eq=[...new Set([...u.matchAll(/\b(ILS|LOC|GP|VOR|DME|NDB|GNSS|GPS|PALS|MLS|TACAN)\b/g)].map(m=>m[1]))].slice(0,3);
+        const rwy=u.match(/RWY\s*([0-9]{2}[LRC]?)/);
+        return {ids: eq.length?[eq.join('/')+(rwy?' RWY'+rwy[1]:'')]:[], verb:/\bU\/S\b|UNSERVICEABLE|\bNOT AVBL\b|UNRELIABLE/.test(u)?'사용불가':'관련 사항'}; },
+      APCH_MIN: u => { const m=u.match(/\b(ILS OR LOC|ILS|RNAV\s*\(RNP\)|RNAV|VOR|NDB)\b[^,\n]{0,25}RWY\s*([0-9]{2}[LRC]?)/);
+        const rwy=u.match(/RWY\s*([0-9]{2}[LRC]?)/);
+        return {ids: m?[`${m[1]} RWY${m[2]}`]:(rwy?[`RWY${rwy[1]}`]:[]), verb:'최저치/절차 변경'}; },
+      MISSED_APCH: u => { const ids=[...new Set([...u.matchAll(/RWY\s*([0-9]{2}[LRC]?(?:\/[0-9]{2}[LRC]?)?)/g)].map(m=>m[1]))].slice(0,3);
+        return {ids, verb:'MISSED APCH 절차 변경/제한'}; },
+      SECURITY: u => ({ids:[], verb:'보안 관련 조치'})
+    };
+    function buildAirportSummary(role, airport){
+      if(!airport) return null;
+      const win=airportOpsWindow(airport);
+      const items=(package1AirportNotams||[]).filter(n=>n.airport===airport && PILOT_PRIORITY_CATS.includes(n.category) && (win?notamIsActive(n,win[0],win[1]):true));
+      const timeMin = role==='DEP' ? currentRouteInfo.etdMinutes : currentRouteInfo.etaMinutes;
+      const timeLabel = (timeMin!=null) ? `${role==='DEP'?'출발':'도착'} ${formatMinutes(((timeMin%1440)+1440)%1440)}Z ±1h` : (role==='DEP'?'출발':'도착');
+      const byCat={}; items.forEach(n=>{(byCat[n.category]=byCat[n.category]||[]).push(n);});
+      let hasCritical=false; const parts=[];
+      PILOT_PRIORITY_CATS.forEach(cat=>{
+        const arr=byCat[cat]; if(!arr||!arr.length) return;
+        if(arr.some(n=>(n.severity||severityForNotam(n))==='CRITICAL')) hasCritical=true;
+        const u=arr.map(n=>(n.rawText||n.summary||'').toUpperCase()).join(' | ');
+        const ex=CATEGORY_EXTRACTORS[cat](u);
+        const shortLabel=PKG1_CATEGORY_CONFIG[cat].label.split(/[(/]/)[0].trim();
+        const idText = ex.ids && ex.ids.length ? ex.ids.join('·') : `${arr.length}건`;
+        parts.push(`<b class="text-slate-100">${esc(shortLabel)}</b> ${esc(idText)} ${esc(ex.verb)}`);
+      });
+      return { airport, role, timeLabel, hasCritical, text: parts.length?parts.join(' · '):'특이사항 없음' };
+    }
+    function buildEnrouteSummary(){
+      if(!routeCoordinates.length) return null;
+      const w=flightWindow(), firSegs=firSegments(), rows=[];
+      (package3AirspaceNotams||[]).forEach(n=>{
+        const cat=classifyAirportNotamCategory(n.rawText||n.summary); if(cat!=='NAV'&&cat!=='SECURITY') return;
+        const hit=routeHitInfo(n.latlngs||[]); if(!hit) return;
+        let ws,we; if(w&&routeElapsed.length===routeCoordinates.length&&routeElapsed[hit.lo]!=null&&routeElapsed[hit.hi]!=null){ws=w.etd+routeElapsed[hit.lo]*6e4-18e5;we=w.etd+routeElapsed[hit.hi]*6e4+18e5;}
+        if(!notamIsActive(n,ws,we)) return;
+        const t1=(currentRouteInfo.etdMinutes+(routeElapsed[hit.lo]||0))%1440, t2=(currentRouteInfo.etdMinutes+(routeElapsed[hit.hi]||routeElapsed[hit.lo]||0))%1440;
+        rows.push({label:(routeTokens[hit.lo]||'')+(hit.hi>hit.lo?'~'+(routeTokens[hit.hi]||''):''), cat, time:`${formatMinutes(t1)}~${formatMinutes(t2)}Z`, desc:(n.summary||n.rawText||'').slice(0,60), id:n.notamId});
+      });
+      firSegs.forEach(sg=>{
+        (package3FirNotams||[]).filter(n=>n.airport===sg.fir).forEach(n=>{
+          const cat=classifyAirportNotamCategory(n.rawText||n.summary); if(cat!=='NAV'&&cat!=='SECURITY') return;
+          if(!notamIsActive(n,sg.enterAbs,sg.exitAbs)) return;
+          const t1=(currentRouteInfo.etdMinutes+(routeElapsed[sg.entryIdx]||0))%1440;
+          rows.push({label:sg.fir+' FIR', cat, time:`${formatMinutes(t1)}Z~`, desc:(n.summary||n.rawText||'').slice(0,60), id:n.notamId});
+        });
+      });
+      if(!rows.length) return {text:'경로상 항법장비·보안 관련 특이사항 없음', gpsCount:0, secCount:0};
+      const dedupe = arr => { const m=new Map(); arr.forEach(r=>{ const k=r.label; if(!m.has(k)) m.set(k,{label:r.label,time:r.time,n:0}); m.get(k).n++; }); return [...m.values()]; };
+      const gps = dedupe(rows.filter(r=>r.cat==='NAV' && /GPS|GNSS/i.test(r.desc)));
+      const navOther = dedupe(rows.filter(r=>r.cat==='NAV' && !(/GPS|GNSS/i.test(r.desc))));
+      const sec = dedupe(rows.filter(r=>r.cat==='SECURITY'));
+      const fmt = r => `${esc(r.label)} (${esc(r.time)}${r.n>1?`, ${r.n}건`:''})`;
+      const lines=[];
+      if(gps.length) lines.push(`<b class="text-sky-300">GPS/GNSS 이상(재밍·신뢰도저하) 예상</b>: ` + gps.slice(0,6).map(fmt).join(', ') + (gps.length>6?` 외 ${gps.length-6}개 구간`:''));
+      if(navOther.length) lines.push(`<b class="text-sky-300">기타 항법장비 이상</b>: ` + navOther.slice(0,4).map(fmt).join(', ') + (navOther.length>4?` 외 ${navOther.length-4}개 구간`:''));
+      if(sec.length) lines.push(`<b class="text-red-300">보안 관련 공역</b>: ` + sec.slice(0,4).map(fmt).join(', ') + (sec.length>4?` 외 ${sec.length-4}개 구간`:''));
+      return {text:lines.join('<br>'), gpsCount:gps.length+navOther.length, secCount:sec.length};
+    }
+    function renderQuickBrief(){
+      const box=document.getElementById('quick-brief-cards'); if(!box) return;
+      const cards=[];
+      [['DEP',currentRouteInfo.dep,'출발공항'],['DEST',currentRouteInfo.dest,'도착공항'],['ALTN',currentRouteInfo.altn,'교체공항']].forEach(([role,ap,roleKr])=>{
+        if(!ap) return;
+        const sum=buildAirportSummary(role,ap);
+        cards.push(`<div class="bg-slate-950 p-3 rounded-xl border ${sum.hasCritical?'border-rose-800/60':'border-slate-800'}">
+          <div class="text-[11px] font-bold text-slate-200 mb-1">${esc(roleKr)} <span class="font-mono-code text-sky-400">${esc(ap)}</span> <span class="text-slate-500 font-normal">(${esc(sum.timeLabel)})</span></div>
+          <p class="text-[11px] text-slate-300 leading-relaxed">${sum.text}</p>
+        </div>`);
+      });
+      const enr=buildEnrouteSummary();
+      if(enr) cards.push(`<div class="bg-slate-950 p-3 rounded-xl border ${enr.secCount?'border-rose-800/60':'border-slate-800'} md:col-span-2">
+        <div class="text-[11px] font-bold text-slate-200 mb-1 flex items-center gap-1"><i data-lucide="satellite" class="w-3.5 h-3.5 text-teal-400"></i> 항로 (FIR/공역) 요약</div>
+        <p class="text-[11px] text-slate-300 leading-relaxed">${enr.text}</p>
+      </div>`);
+      box.innerHTML = cards.length ? cards.join('') : `<div class="p-3 text-center text-xs text-slate-500 italic bg-slate-950/50 rounded-xl border border-slate-800/60 md:col-span-2">FPL을 먼저 분석하세요.</div>`;
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function renderPackage3Notams() {
+      const container = document.getElementById('pdf-notams-container');
+      const badge = document.getElementById('pdf-notam-count-badge');
+      if (badge) badge.textContent = `${package3AirspaceNotams.length}개 감지`;
+
+      if(!container) return;
+      if(package3AirspaceNotams.length === 0) { 
+        container.innerHTML = `<div class="p-3 text-center text-xs text-slate-500 bg-slate-950/50 rounded-xl">감지된 공역 노탐이 없습니다.</div>`; 
+        return; 
+      }
+      
+      container.innerHTML = package3AirspaceNotams.map(n => `
+        <div class="bg-slate-950 p-2.5 rounded-xl border border-slate-800 hover:border-rose-900/50 flex items-center justify-between gap-2">
+          <div class="flex-1 min-w-0 cursor-pointer" onclick="viewNotamDetail('${n.notamId}', 'PKG3')">
+            <div class="flex justify-between items-center gap-1">
+              <span class="font-bold text-xs text-rose-400 truncate font-mono-code">${n.notamId}</span>
+              <span class="text-[10px] text-amber-400 font-mono-code flex-shrink-0">${n.limits || 'SFC~FL600'}</span>
+            </div>
+            <div class="flex items-center gap-1 text-[10px] text-sky-300 font-mono-code mt-0.5 truncate">
+              <i data-lucide="clock" class="w-3 h-3 text-sky-400 flex-shrink-0"></i>
+              <span>${n.validity || (n.validFrom ? `${n.validFrom} ~ ${n.validTo}` : '상시 / PERM')}</span>
+            </div>
+            <p class="text-[10px] text-slate-400 truncate mt-0.5">${n.rawText ? n.rawText.substring(0, 45) + '...' : ''}</p>
+          </div>
+          <button type="button" onclick="copySingleAirspace('${n.notamId}')" class="text-[10px] text-emerald-400 hover:text-white bg-emerald-950/60 hover:bg-emerald-900 border border-emerald-800/60 px-2 py-1 rounded transition-all flex items-center gap-1 active:scale-95 flex-shrink-0" title="좌표 복사">
+            <i data-lucide="copy" class="w-3 h-3"></i> 복사
+          </button>
+        </div>
+      `).join('');
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function copyTextToClipboard(text) {
+      if (!text) return;
+      const tempArea = document.createElement('textarea');
+      tempArea.value = text;
+      tempArea.style.position = 'fixed';
+      tempArea.style.left = '-9999px';
+      tempArea.style.top = '0';
+      tempArea.style.opacity = '0';
+      document.body.appendChild(tempArea);
+      tempArea.focus();
+      tempArea.select();
+      try {
+        document.execCommand('copy');
+      } catch (err) {
+        console.warn("Clipboard copy fallback error:", err);
+      }
+      document.body.removeChild(tempArea);
+    }
+
+    function copyAllAirspaceForFliteDeck() {
+      if (!package3AirspaceNotams || package3AirspaceNotams.length === 0) return;
+      const validCoordsList = package3AirspaceNotams.map(n => (n.fmsCoords || '').trim()).filter(c => c.length > 0);
+      if (validCoordsList.length === 0) return;
+      copyTextToClipboard(validCoordsList.join('\n\n'));
+
+      const btnText = document.getElementById('btn-copy-all-text');
+      if (btnText) {
+        const orig = btnText.textContent;
+        btnText.textContent = "복사 완료!";
+        setTimeout(() => { btnText.textContent = orig; }, 1500);
+      }
+    }
+
+    window.copySingleAirspace = function(id) {
+      const target = package3AirspaceNotams.find(n => n.notamId === id);
+      if (!target || !target.fmsCoords) return;
+      copyTextToClipboard(target.fmsCoords);
+    };
+
+    function altFG(b){
+      const f=b.match(/\n\s*F\)\s*([^\n]*)/),g=b.match(/\n\s*G\)\s*([^\n]*)/);
+      if(!f||!g||/SEE TEXT/i.test(f[1]+g[1]))return parseAltitudeLimit(b);
+      return parseAltitudeLimit(f[1]+' '+g[1]);
+    }
+    function circlePoly(lat,lon,nm){
+      const k=Math.cos(lat*Math.PI/180)||1e-6,pts=[];
+      for(let i=0;i<48;i++){const a=i/48*2*Math.PI;pts.push([lat+nm/60*Math.sin(a),lon+nm/60*Math.cos(a)/k]);}
+      return pts;
+    }
+    // OFP 항법로그: "N33 56.6 ..." 다음 줄 "DLREY W118 27.9" 형식. 첫 항법로그(주경로)만 사용, 날짜변경선 연속 보정
+    function normText(t){return String(t||'').replace(/\r/g,'').replace(/[ \t]+/g,' ').replace(/ ?\n ?/g,'\n');}
+    // 항법로그: "N33 56.6 ..." 다음 줄 "DLREY W118 27.9 ... 00.01 0006/". 첫 항법로그(주경로)만 사용, 날짜변경선 연속 보정, FIR 통과점 인식
+    function parseNavlog(raw){
+      const text=normText(raw).replace(/^\s*Page\b.*$/gm,'');
+      const a=text.indexOf('LATITUDE'); if(a<0)return [];
+      let b=text.indexOf('ROUTE TO ALTN',a); if(b<0)b=text.length;
+      const rx=/([NS])(\d{2}) (\d{2}\.\d)[^\n]*\n\s*(\S+) ([EW])(\d{3}) (\d{2}\.\d)([^\n]*)/g,seg=text.slice(a,b),out=[]; let m,prev=null;
+      while((m=rx.exec(seg))){
+        let la=+m[2]+ +m[3]/60,lo=+m[6]+ +m[7]/60; if(m[1]==='S')la=-la; if(m[5]==='W')lo=-lo;
+        if(prev!==null){while(lo-prev>180)lo-=360;while(lo-prev<-180)lo+=360;}
+        prev=lo; const tm=m[8].match(/(\d{2})\.(\d{2}) \d{4}\//);
+        const fm=m[4]==='FIR'?seg.slice(m.index+m[0].length,m.index+m[0].length+120).match(/^\s*\/\s*([A-Z]{4}) FIR/):null;
+        out.push({name:m[4],ll:[la,lo],el:tm?+tm[1]*60+ +tm[2]:null,fir:fm?fm[1]:null});
+      }
+      return out;
+    }
+    // 로컬 fix DB: OFP 항법로그에서 자동 학습(오프라인 저장), FPL만 있을 때 경로 복원에 사용
+    const FIX_DB_KEY='FIX_DB_V1';
+    function loadFixDb(){try{return JSON.parse(localStorage.getItem(FIX_DB_KEY)||'{}');}catch(e){return {};}}
+    function learnFixes(nav){
+      const db=loadFixDb();
+      nav.forEach(w=>{if(/^[A-Z]{3,5}$/.test(w.name)&&!['FIR','TOC','TOD'].includes(w.name)){const lo=((w.ll[1]+180)%360+360)%360-180;db[w.name]=[+w.ll[0].toFixed(4),+lo.toFixed(4)];}});
+      try{localStorage.setItem(FIX_DB_KEY,JSON.stringify(db));}catch(e){}
+    }
+    function fixDbCount(){ return Object.keys(loadFixDb()).length; }
+    function updateFixDbStatus(){
+      const el=document.getElementById('fixdb-status'); if(!el)return;
+      el.textContent = `로컬 학습 fix DB(오프라인, 기기 저장): ${fixDbCount()}개 — 실제 OFP를 업로드할수록 늘어나며 다음 FPL 경로 복원에 자동 사용됩니다.`;
+    }
+    // 항법로그 FIR 전환점을 시각(ETD 기준 절대시각)이 붙은 구간 목록으로 변환
+    function firSegments(){
+      if(!routeFir || !routeFir.length || currentRouteInfo.etdMinutes===null) return [];
+      const idxs=[]; routeFir.forEach((f,i)=>{ if(f) idxs.push(i); });
+      if(!idxs.length) return [];
+      const w=flightWindow(); if(!w) return [];
+      const segs=[];
+      idxs.forEach((idx,k)=>{
+        const nextIdx = idxs[k+1] !== undefined ? idxs[k+1] : routeCoordinates.length-1;
+        const enterEl = routeElapsed[idx], exitEl = routeElapsed[nextIdx];
+        if(enterEl==null) return;
+        segs.push({ fir:routeFir[idx], entryIdx:idx, exitIdx:nextIdx,
+          enterAbs: w.etd + enterEl*6e4, exitAbs: w.etd + (exitEl!=null?exitEl:enterEl)*6e4 });
+      });
+      return segs;
+    }
+    function renderFirNotams(){
+      const container=document.getElementById('fir-notam-list'), badge=document.getElementById('fir-notam-count-badge');
+      const segs=firSegments();
+      const rows=[];
+      (package3FirNotams||[]).forEach(n=>{
+        const seg=segs.find(s=>s.fir===n.airport);
+        if(!seg){ rows.push({n, active:null, seg:null}); return; }
+        const active = notamIsActive(n, seg.enterAbs, seg.exitAbs);
+        rows.push({n, active, seg});
+      });
+      if(badge) badge.textContent = `${rows.length}개`;
+      if(!container) return;
+      if(!rows.length){ container.innerHTML='<div class="p-3 text-center text-xs text-slate-500 italic bg-slate-950/50 rounded-xl border border-slate-800/60">경로에 FIR 통과 정보가 없습니다.</div>'; return; }
+      rows.sort((a,b)=>(b.active===true)-(a.active===true));
+      container.innerHTML = rows.map(r=>{
+        const st = r.active===null? '경로 미통과 FIR' : (r.active? '통과시각 유효' : '통과시각 비활성');
+        const color = r.active===null? 'slate' : (r.active? 'rose':'slate');
+        const time = r.seg ? `${formatMinutes((currentRouteInfo.etdMinutes+ (routeElapsed[r.seg.entryIdx]||0))%1440)}Z ~ ${formatMinutes((currentRouteInfo.etdMinutes+(routeElapsed[r.seg.exitIdx]||routeElapsed[r.seg.entryIdx]||0))%1440)}Z` : '';
+        return `<div class="bg-slate-950 p-2.5 rounded-xl border border-${color}-900/50 flex items-center justify-between gap-2 cursor-pointer" onclick="viewNotamDetail('${r.n.notamId}','PKG3FIR')">
+          <div class="flex-1 min-w-0">
+            <div class="flex justify-between items-center gap-1">
+              <span class="font-bold text-xs text-${color}-400 truncate font-mono-code">${esc(r.n.notamId)}</span>
+              <span class="text-[10px] text-${color}-300 font-mono-code flex-shrink-0">${st}</span>
+            </div>
+            <div class="text-[10px] text-sky-300 font-mono-code mt-0.5 truncate">${esc(r.n.airport)} FIR${time?' · 통과 '+time:''}</div>
+            <p class="text-[10px] text-slate-400 truncate mt-0.5">${esc(r.n.summary||'')}</p>
+          </div>
+        </div>`;
+      }).join('');
+      if (window.lucide) lucide.createIcons();
+    }
+    function resolveFplRoute(fpl){
+      const db=loadFixDb(),pts=[],names=[],unres=[],norm=fpl.replace(/[Ø]/g,'0');
+      const m=norm.match(/(?:^|\n)\s*-([NKM]\d{3,4}[FAMS]\d{3,4}[\s\S]*?)\n\s*-[A-Z]{4}\d{4}/); if(!m)return {pts,names,unres};
+      let prev=null;
+      m[1].split(/\s+/).forEach(raw=>{
+        const t=raw.split('/')[0]; if(!t||t==='DCT'||/^[NKM]\d{3,4}[FAMS]\d{3,4}$/.test(t)||/^[A-Z]{1,2}\d{1,3}$/.test(t))return;
+        let ll=null;
+        if(/^\d{2,6}[NS]\d{3,7}[EW]$/.test(t))ll=parseRouteCoordinates(' '+t+' ').coords[0];
+        else if(/^[A-Z]{3,5}$/.test(t)){if(db[t])ll=db[t];else unres.push(t);}
+        if(!ll)return;
+        let lo=ll[1]; if(prev!==null){while(lo-prev>180)lo-=360;while(lo-prev<-180)lo+=360;}
+        prev=lo; pts.push([ll[0],lo]); names.push(t);
+      });
+      return {pts,names,unres};
+    }
+    // OFP NOTAM 패키지 파서: "21SEP26 07:30 - 24SEP26 13:30   KLAX A5095/26" 헤더 줄 기준
+    function parseOfpNotams(raw){
+      const text=normText(raw).replace(/^\s*Page\s*-?\s*\d+(?:\s*of\s*\d+)?\s*$/gm,'');
+      const hdr=/^[ \t]*(?:\d+\.\s*)?(\d{2}[A-Z]{3}\d{2}\s+\d{2}:\d{2})\s*-\s*(\d{2}[A-Z]{3}\d{2}\s+\d{2}:\d{2}(?:\s*EST)?|UFN|PERM)\s+(?:([A-Z]{4})\s+)?([A-Z]{1,4}\d{2,4}\/\d{2})[ \t]*$/gm;
+      const bnd=/^[ \t]*(?:\[(?:DEP|DEST|ALTN|REFILE|EDTO|ERA|FIR)\]|NOTAM PACKAGE \d|END OF (?:NOTAM )?PACKAGE|◼)/gm;
+      const heads=[...text.matchAll(hdr)],stops=[...text.matchAll(bnd)].map(x=>x.index),pk=[...text.matchAll(/NOTAM PACKAGE (\d)/g)].map(x=>[x.index,+x[1]]);
+      const out={airspace:[],airport:[],fir:[]},seen=new Set();
+      heads.forEach((h,i)=>{
+        const st=h.index+h[0].length; let en=heads[i+1]?heads[i+1].index:text.length;
+        const sp=stops.find(x=>x>st); if(sp!==undefined&&sp<en)en=sp;
+        const body=text.slice(st,en).replace(/\n\s*\n/g,'\n').trim();
+        const pkg=(pk.filter(x=>x[0]<h.index).pop()||[0,0])[1];
+        const id=(h[3]?h[3]+' ':'')+h[4]; if(seen.has(id))return; seen.add(id);
+        const from=h[1].replace(/\s+/g,' '),to=h[2].replace(/\s+/g,' ').replace(/\s*EST$/,'EST');
+        const dm=('\n'+body).match(/\n\s*D\)\s*([\s\S]*?)(?=\n\s*[EFG]\))/);
+        const em=('\n'+body).match(/\n\s*E\)\s*([\s\S]*?)(?=\n\s*[FG]\)|\n\s*COMMENT\)|$)/);
+        const etext=(em?em[1]:body).replace(/\s+/g,' ').trim();
+        const base={notamId:id,airport:h[3]||'',validFrom:from,validTo:to,validity:from+' ~ '+to,schedule:dm?dm[1].replace(/\s+/g,' ').trim():'',limits:altFG('\n'+body).label,rawText:body,summary:etext.slice(0,80)+(etext.length>80?'...':'')};
+        const cs=body.match(/\d{2,6}[NS]\s*\d{3,7}[EW]/g)||[];
+        const rad=body.match(/(\d+(?:\.\d+)?)\s*NM\s+RADIUS\s+(?:CENTERED\s+(?:AT|ON)\s+)?(\d{2,6}[NS]\s*\d{3,7}[EW])/i);
+        if(rad){const c=convert60ToFms(rad[2]); if(c.latlngs.length){const r=+rad[1];out.airspace.push({...base,latlngs:circlePoly(c.latlngs[0][0],c.latlngs[0][1],r),fmsCoords:c.fmsText+'  R'+r+'NM'});}}
+        else if(cs.length>=3){const f=convert60ToFms(cs.join('-'));if(f.latlngs.length>=3&&/\b(AREA|BOUNDED|DEFINED|POINT OF ORIGIN)\b/.test(body)&&!/\bROUTE\b/.test(body))out.airspace.push({...base,latlngs:f.latlngs,fmsCoords:f.fmsText});}
+        else if(h[3]&&pkg===3)out.fir.push(base);
+        else if(h[3]){const cat=classifyAirportNotamCategory(etext),bad=/\b(CLSD|U\/S|UNSERVICEABLE|NOT AVBL|PROHIBITED|UNRELIABLE)\b/.test(etext.toUpperCase());out.airport.push({...base,category:cat,severity:!bad?'ADVISORY':(cat==='RWY'||cat==='NAV'||cat==='APCH_MIN')?'CRITICAL':'WARNING'});}
+      });
+      return out;
+    }
+    async function handlePdfUpload(file) {
+      if(!file) return;
+      const pBar = document.getElementById('pdf-progress-bar');
+      if (pBar) pBar.classList.remove('hidden');
+      try {
+        if (!window.pdfjsLib) {
+          throw new Error('PDF.js 라이브러리를 불러오지 못했습니다. 인터넷 연결 또는 브라우저의 외부 스크립트 차단 여부를 확인하세요.');
+        }
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfData = new Uint8Array(arrayBuffer);
+        let pdf;
+        try {
+          // 1차: Web Worker 사용
+          pdf = await pdfjsLib.getDocument({data: pdfData}).promise;
+        } catch (workerErr) {
+          console.warn('PDF Worker 로딩 실패. 메인 스레드 방식으로 재시도합니다.', workerErr);
+          // 2차: Worker 없이 PDF 파싱 (file:// 실행, 일부 모바일 브라우저에서 유용)
+          pdf = await pdfjsLib.getDocument({data: pdfData, disableWorker: true}).promise;
+        }
+        let fullText = '';
+        // PDF.js는 텍스트 아이템을 PDF 내부 stream 순서로 반환하며, 이 순서가 항상 시각적 행/열 순서와 일치하지는
+        // 않는다(특히 표 형식 항법로그에서 아이템이 열 단위로 묶여 나오는 경우 줄이 뒤섞임). Y좌표로 같은 행을 묶고
+        // X좌표로 좌→우 정렬해 pdftotext -layout과 동등한 방식으로 재구성한다.
+        function layoutTextFromItems(items){
+          const rows=[];
+          items.forEach(it=>{
+            if(!it.str || !it.str.trim()) return;
+            const y=it.transform[5], x=it.transform[4];
+            let row=rows.find(r=>Math.abs(r.y-y)<2.5);
+            if(!row){ row={y,cells:[]}; rows.push(row); }
+            row.cells.push({x,str:it.str});
+          });
+          rows.sort((a,b)=>b.y-a.y); // PDF 좌표계는 위로 갈수록 y가 커짐 → 내림차순 = 위에서 아래로
+          return rows.map(r=>{ r.cells.sort((a,b)=>a.x-b.x); return r.cells.map(c=>c.str.trim()).filter(Boolean).join(' '); }).join('\n');
+        }
+        for(let i=1; i<=pdf.numPages; i++){
+          const content = await (await pdf.getPage(i)).getTextContent();
+          fullText += layoutTextFromItems(content.items) + '\n';
+        }
+
+        const fplMatch = fullText.match(/\(FPL-[\s\S]*?\)/);
+        const fplToApply = fplMatch ? fplMatch[0] : fullText;
+
+        document.getElementById('route-input').value = fplToApply;
+        applyFlightPlan(fplToApply);
+
+        const parsed = parseOfpNotams(fullText);
+        package3AirspaceNotams = parsed.airspace;
+        package1AirportNotams = parsed.airport;
+        package3FirNotams = parsed.fir;
+        const nav = parseNavlog(fullText);
+        if (nav.length >= 2) {
+          routeCoordinates = nav.map(w => w.ll); routeTokens = nav.map(w => w.name); routeElapsed = nav.map(w => w.el); routeFir = nav.map(w => w.fir || null); routeSource = `OFP 항법로그 ${nav.length}점`; learnFixes(nav);
+          const fl = normText(fullText).match(/^\s*FIR:\s*((?:[A-Z]{4} ?)+)/m); if (fl) routeFir[0] = fl[1].trim().split(/\s+/)[0];
+          const rc = document.getElementById('route-coord-preview');
+          if (rc) rc.textContent = `OFP 항법로그 waypoint ${nav.length}개 사용 (${nav[0].name} → ${nav[nav.length-1].name})`;
+        }
+        renderPackage3Notams();
+        renderPackage1Notams();
+        runConflictAnalysis();
+        renderFirNotams();
+        updateFixDbStatus();
+
+      } catch(e) { 
+        console.error('PDF Parse error:', e);
+        const label = document.getElementById('pdf-upload-label');
+        const sub = document.getElementById('pdf-upload-subtext');
+        if (label) label.textContent = 'PDF 분석 실패';
+        if (sub) sub.textContent = (e && e.message) ? e.message : 'PDF 파일을 읽을 수 없습니다.';
+        alert('PDF 분석에 실패했습니다.\n\n' + ((e && e.message) ? e.message : '알 수 없는 오류') + '\n\n가능하면 Chrome/Edge에서 다시 열어주세요.');
+      } finally { 
+        if (pBar) pBar.classList.add('hidden'); 
+      }
+    }
+
+
+    window.onload = () => {
+      if (window.lucide) lucide.createIcons(); 
+      updateRecentRoutesDropdown();
+
+      const pdfInput = document.getElementById('pdf-file-input');
+      if (pdfInput) {
+        pdfInput.addEventListener('change', (e) => {
+          if(e.target.files && e.target.files[0]) handlePdfUpload(e.target.files[0]);
+          e.target.value = '';
+        });
+      }
+
+      const btnApply = document.getElementById('btn-apply-route');
+      if (btnApply) {
+        btnApply.addEventListener('click', () => applyFlightPlan(document.getElementById('route-input').value));
+      }
+
+      const btnReset = document.getElementById('btn-reset-route');
+      if (btnReset) {
+        btnReset.addEventListener('click', () => {
+          document.getElementById('route-input').value = '';
+          package3AirspaceNotams = []; package1AirportNotams = []; package3FirNotams = [];
+          applyFlightPlan('');
+          renderPackage3Notams();
+        });
+      }
+
+      const btnClearRoute = document.getElementById('btn-clear-route');
+      if (btnClearRoute) {
+        btnClearRoute.addEventListener('click', () => {
+          document.getElementById('route-input').value = '';
+        });
+      }
+
+      const btnCopyAll = document.getElementById('btn-copy-all-airspace');
+      if (btnCopyAll) {
+        btnCopyAll.addEventListener('click', copyAllAirspaceForFliteDeck);
+      }
+
+      const selectRecent = document.getElementById('recent-routes-select');
+      if (selectRecent) {
+        selectRecent.addEventListener('change', (e) => {
+          if(!e.target.value) return;
+          const h = JSON.parse(localStorage.getItem(RECENT_ROUTES_KEY));
+          if(h && h[e.target.value]) { 
+            document.getElementById('route-input').value = h[e.target.value].fpl; 
+            applyFlightPlan(h[e.target.value].fpl); 
+          }
+        });
+      }
+
+      const tabDep = document.getElementById('btn-pkg1-tab-dep');
+      const tabDest = document.getElementById('btn-pkg1-tab-dest');
+      const tabAltn = document.getElementById('btn-pkg1-tab-altn');
+      const ACTIVE_TAB_CLS = "flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all bg-sky-600 text-white shadow";
+      const INACTIVE_TAB_CLS = "flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all bg-slate-800 text-slate-400 hover:text-slate-200";
+      const selectPkg1Tab = (tab) => {
+        currentPkg1Tab = tab;
+        if (tabDep) tabDep.className = tab === 'DEP' ? ACTIVE_TAB_CLS : INACTIVE_TAB_CLS;
+        if (tabDest) tabDest.className = tab === 'DEST' ? ACTIVE_TAB_CLS : INACTIVE_TAB_CLS;
+        if (tabAltn) tabAltn.className = tab === 'ALTN' ? ACTIVE_TAB_CLS : INACTIVE_TAB_CLS;
+        renderPackage1Notams();
+      };
+      if (tabDep) tabDep.addEventListener('click', () => selectPkg1Tab('DEP'));
+      if (tabDest) tabDest.addEventListener('click', () => selectPkg1Tab('DEST'));
+      if (tabAltn) tabAltn.addEventListener('click', () => selectPkg1Tab('ALTN'));
+
+      const chkTimeFilter = document.getElementById('chk-pkg1-time-filter');
+      if (chkTimeFilter) {
+        chkTimeFilter.addEventListener('change', (e) => {
+          pkg1TimeFilterActive = e.target.checked;
+          renderPackage1Notams();
+        });
+      }
+
+      const btnConvert = document.getElementById('btn-convert-notam');
+      if (btnConvert) {
+        btnConvert.addEventListener('click', () => {
+          const txt = document.getElementById('notam-input').value; if(!txt) return;
+          const res = convert60ToFms(txt);
+          document.getElementById('fms-output').textContent = res.fmsText;
+        });
+      }
+
+      const btnResetNotam = document.getElementById('btn-reset-notam');
+      if (btnResetNotam) {
+        btnResetNotam.addEventListener('click', () => {
+          document.getElementById('notam-input').value = '';
+          document.getElementById('fms-output').textContent = '대기중...';
+        });
+      }
+
+      ['map-chk-all','map-chk-tiles'].forEach(id=>document.getElementById(id)?.addEventListener('change',()=>renderMap(false)));
+      renderMap(true);
+      const btnRunConflict = document.getElementById('btn-run-conflict');
+      if(btnRunConflict) btnRunConflict.addEventListener('click',runConflictAnalysis);
+      const btnExportBriefing = document.getElementById('btn-export-briefing');
+      if(btnExportBriefing) btnExportBriefing.addEventListener('click',()=>copyTextToClipboard(document.getElementById('briefing-output').textContent));
+
+      const btnCopyFms = document.getElementById('btn-copy-fms');
+      if (btnCopyFms) {
+        btnCopyFms.addEventListener('click', () => {
+          copyTextToClipboard(document.getElementById('fms-output').textContent);
+        });
+      }
+
+      const btnCopyModalFms = document.getElementById('btn-copy-modal-fms');
+      if (btnCopyModalFms) {
+        btnCopyModalFms.addEventListener('click', () => {
+          const fmsText = document.getElementById('modal-fms-coords').textContent;
+          if (!fmsText || fmsText.trim() === '') return;
+          copyTextToClipboard(fmsText);
+          const copyText = document.getElementById('copy-modal-fms-text');
+          if (copyText) {
+            copyText.textContent = '복사 완료!';
+            setTimeout(() => { copyText.textContent = '좌표 복사'; }, 1500);
+          }
+        });
+      }
+
+      window.viewNotamDetail = (id, type) => {
+        const src = type==='PKG1'?package1AirportNotams:(type==='PKG3FIR'?package3FirNotams:package3AirspaceNotams);
+        const target = src.find(n=>n.notamId===id);
+        if(!target) return;
+        document.getElementById('modal-notam-title').innerHTML = `<span class="w-3 h-3 rounded-full bg-rose-500"></span>${target.notamId} 상세`;
+        document.getElementById('modal-validity').textContent = target.validity || (target.validFrom ? `${target.validFrom} ~ ${target.validTo}` : "PERM");
+        document.getElementById('modal-limits').textContent = target.limits || target.category || "제한 없음";
+        document.getElementById('modal-raw-text').textContent = target.rawText || target.summary || "내용 없음";
+        const fmsBlock = document.getElementById('modal-fms-block');
+        if (fmsBlock) {
+          fmsBlock.style.display = target.fmsCoords ? 'block' : 'none';
+          if(target.fmsCoords) document.getElementById('modal-fms-coords').textContent = target.fmsCoords;
+        }
+        document.getElementById('notam-detail-modal').classList.remove('hidden');
+        if (window.lucide) lucide.createIcons();
+      };
+      
+      const btnCloseModal = document.getElementById('btn-close-modal');
+      if (btnCloseModal) btnCloseModal.addEventListener('click', () => document.getElementById('notam-detail-modal').classList.add('hidden'));
+      const btnModalCloseBottom = document.getElementById('btn-modal-close-bottom');
+      if (btnModalCloseBottom) btnModalCloseBottom.addEventListener('click', () => document.getElementById('notam-detail-modal').classList.add('hidden'));
+
+    };
+  </script>
+<div class="text-[9px] text-slate-600 text-center px-4 pb-3">NOTAM Analyzer v2 — FPL 좌표 추출 · 공역 polygon 교차검사 · 고도범위 파싱 · 심각도 분류 · 운항 브리핑 생성</div>
+</body>
+</html>
